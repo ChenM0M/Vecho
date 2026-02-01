@@ -1,0 +1,33 @@
+[package]
+name = "vecho-studio"
+version = "0.1.0"
+description = "Vecho Studio"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "vecho_studio"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vecho-studio"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "process", "io-util"] }
+base64 = "0.22"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "multipart"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+xz2 = "0.1"
+flate2 = "1"
+bzip2 = "0.4"
+time = { version = "0.3", features = ["formatting"] }

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Vecho Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+          },
+          colors: {
+            border: "hsl(var(--border))",
+            background: "hsl(var(--background))",
+            foreground: "hsl(var(--foreground))",
+            zinc: {
+              750: '#27272a',
+              850: '#1f2023',
+              950: '#09090b',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      overflow: hidden;
+      /* Define clearer, more professional variables */
+      --border: 240 5.9% 90%;
+      --background: 0 0% 100%;
+      --foreground: 240 10% 3.9%;
+    }
+    
+    .dark body {
+      --border: 240 3.7% 15.9%;
+      --background: 240 10% 3.9%;
+      --foreground: 0 0% 98%;
+    }
+
+    /* Refined, thinner scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #d4d4d8;
+      border-radius: 4px;
+    }
+    .dark ::-webkit-scrollbar-thumb {
+      background: #3f3f46;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #a1a1aa;
+    }
+
+    /* --- ANIMATION UTILITIES --- */
+    
+    /* Smooth page entry - subtle, no scale (avoid ghosting) */
+    @keyframes page-enter-frames {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .page-enter {
+      animation: page-enter-frames 0.16s ease-out;
+    }
+
+    /* Modal Scale Up */
+    @keyframes modal-pop {
+      from { opacity: 0; transform: scale(0.96) translateY(10px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .animate-modal-enter {
+      animation: modal-pop 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    /* Fade In */
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .animate-fade-in { animation: fade-in 0.12s ease-out; }
+
+    /* Micro-interaction: Button Press */
+    .btn-press {
+      transition: transform 0.05s ease-out, background-color 0.15s ease, color 0.15s ease;
+    }
+    .btn-press:active {
+      transform: scale(0.96);
+    }
+    
+    /* Card Hover Lift */
+    .card-hover {
+      transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.2s;
+    }
+    .card-hover:hover {
+      transform: translateY(-2px);
+    }
+    
+    /* Stagger children (simple manual implementation for common use cases) */
+    .stagger-enter > *:nth-child(1) { animation-delay: 0ms; }
+    .stagger-enter > *:nth-child(2) { animation-delay: 50ms; }
+    .stagger-enter > *:nth-child(3) { animation-delay: 100ms; }
+    .stagger-enter > *:nth-child(4) { animation-delay: 150ms; }
+
+    /* Line clamps (Tailwind plugin not available via CDN) */
+    .vecho-clamp-1,
+    .vecho-clamp-2,
+    .vecho-clamp-3 {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .vecho-clamp-1 { -webkit-line-clamp: 1; }
+    .vecho-clamp-2 { -webkit-line-clamp: 2; }
+    .vecho-clamp-3 { -webkit-line-clamp: 3; }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "rxjs": "https://esm.sh/rxjs@^7.8.2?conditions=es2015",
+    "rxjs/operators": "https://esm.sh/rxjs@^7.8.2/operators?conditions=es2015",
+    "rxjs/ajax": "https://esm.sh/rxjs@^7.8.2/ajax?conditions=es2015",
+    "rxjs/webSocket": "https://esm.sh/rxjs@^7.8.2/webSocket?conditions=es2015",
+    "rxjs/testing": "https://esm.sh/rxjs@^7.8.2/testing?conditions=es2015",
+    "rxjs/fetch": "https://esm.sh/rxjs@^7.8.2/fetch?conditions=es2015",
+    "@angular/platform-browser": "https://esm.sh/@angular/platform-browser@^21.0.6?external=rxjs",
+    "@angular/core": "https://esm.sh/@angular/core@^21.0.6?external=rxjs",
+    "@angular/common": "https://esm.sh/@angular/common@^21.0.6?external=rxjs",
+    "@angular/compiler": "https://esm.sh/@angular/compiler@^21.0.6?external=rxjs",
+    "@angular/router": "https://esm.sh/@angular/router@^21.0.6?external=rxjs",
+    "jquery": "https://esm.sh/jquery@^3.7.1?external=rxjs"
+  }
+}
+</script>
+<!-- Styles are currently inlined and Tailwind is loaded via CDN. -->
+</head>
+<body class="h-screen w-screen overflow-hidden text-zinc-800 bg-[#fbfbfa] dark:bg-[#09090b] dark:text-zinc-200 selection:bg-zinc-200 selection:text-zinc-900 dark:selection:bg-zinc-700 dark:selection:text-white transition-colors duration-300">
+  <app-root></app-root>
+</body>
+</html>

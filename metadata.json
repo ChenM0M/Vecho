@@ -1,0 +1,7 @@
+{
+  "name": "Vecho Studio",
+  "description": "A high-fidelity Angular reproduction of a modern desktop application interface featuring a complex settings dashboard, media player layout, and tool management.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

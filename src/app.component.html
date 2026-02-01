@@ -1,0 +1,320 @@
+<div
+    class="flex h-screen w-screen overflow-hidden bg-white dark:bg-black text-zinc-900 dark:text-zinc-100 font-sans selection:bg-zinc-900 selection:text-white dark:selection:bg-white dark:selection:text-black">
+
+    <!-- Global Toast -->
+    <app-toast-container></app-toast-container>
+
+    <!-- Global Confirm Dialog -->
+    <app-confirm-dialog></app-confirm-dialog>
+
+    <!-- Global Lightbox (images / diagrams) -->
+    <app-lightbox></app-lightbox>
+
+    <!-- Settings Modal (Overlay) -->
+    @if (config.settingsOpen()) {
+    <app-settings class="absolute inset-0 z-[100] rounded-none"></app-settings>
+    }
+
+    <!-- About Modal (Overlay) -->
+    @if (config.aboutOpen()) {
+    <div
+        class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-white/80 dark:bg-black/80 backdrop-blur-sm animate-fade-in">
+        <div (click)="config.aboutOpen.set(false)" class="absolute inset-0"></div>
+        <div
+            class="relative bg-white dark:bg-zinc-900 shadow-2xl p-12 max-w-md w-full border border-zinc-100 dark:border-zinc-800 text-center animate-modal-enter z-10 rounded-lg">
+            <div class="flex flex-col items-center">
+                <div
+                    class="w-16 h-16 bg-black dark:bg-white text-white dark:text-black rounded-none flex items-center justify-center mb-6">
+                    <!-- V Logo SVG -->
+                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter">
+                        <path d="M12 2v4" />
+                        <path d="m16.2 7.8 2.9-2.9" />
+                        <path d="M18 12h4" />
+                        <path d="m16.2 16.2 2.9 2.9" />
+                        <path d="M12 18v4" />
+                        <path d="m4.9 19.1 2.9-2.9" />
+                        <path d="M2 12h4" />
+                        <path d="m4.9 4.9 2.9 2.9" />
+                    </svg>
+                </div>
+                <h2 class="text-3xl font-bold tracking-tighter mb-2">Vecho</h2>
+                <p class="text-sm text-zinc-500 font-mono mb-8">v2.3.0</p>
+                <button (click)="config.aboutOpen.set(false)"
+                    class="w-full py-3 bg-black dark:bg-white hover:opacity-90 text-white dark:text-black font-medium text-sm transition-opacity">
+                    {{ config.t().common.close }}
+                </button>
+            </div>
+        </div>
+    </div>
+    }
+
+    <!-- FIXED: Logo + Toggle Area (Always at Top-Left, Never Moves) -->
+    <div class="fixed left-0 top-0 h-[40px] z-50 flex items-center px-3 gap-2 bg-[#fbfbfb] dark:bg-black border-b border-zinc-200 dark:border-zinc-800 select-none"
+        [class.w-[260px]]="!config.sidebarCollapsed()" [class.w-auto]="config.sidebarCollapsed()"
+        [class.border-r]="!config.sidebarCollapsed()">
+
+        <!-- Logo -->
+        <div class="flex items-center gap-2.5">
+            <div class="flex h-7 w-7 items-center justify-center text-zinc-900 dark:text-white shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter">
+                    <path d="M12 2v4" />
+                    <path d="m16.2 7.8 2.9-2.9" />
+                    <path d="M18 12h4" />
+                    <path d="m16.2 16.2 2.9 2.9" />
+                    <path d="M12 18v4" />
+                    <path d="m4.9 19.1 2.9-2.9" />
+                    <path d="M2 12h4" />
+                    <path d="m4.9 4.9 2.9 2.9" />
+                </svg>
+            </div>
+        </div>
+
+        <!-- Toggle Button (Always Here, Position Never Changes) -->
+        <button data-no-drag
+            class="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-sm transition-colors text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+            (click)="config.toggleSidebar()"
+            [title]="config.sidebarCollapsed() ? config.t().common.expandSidebar : config.t().common.collapseSidebar">
+            <app-icon name="panel-left" [size]="18"></app-icon>
+        </button>
+
+        <!-- Brand Name (Only when expanded) -->
+        @if (!config.sidebarCollapsed()) {
+        <span class="text-sm font-extrabold tracking-tight text-zinc-900 dark:text-white ml-1">Vecho</span>
+        }
+
+        @if (isTauri() && !isMacOS()) {
+        <div class="flex-1 h-full select-none" draggable="false" data-tauri-drag-region></div>
+        }
+    </div>
+
+    <!-- 1. LEFT: Sidebar (Starts Below Fixed Header) -->
+    <aside
+        class="fixed left-0 top-[40px] bottom-0 border-r border-zinc-200 dark:border-zinc-800 bg-[#fbfbfb] dark:bg-black transition-[width] duration-300 ease-in-out z-20 overflow-hidden"
+        [class.w-0]="config.sidebarCollapsed()" [class.w-[260px]]="!config.sidebarCollapsed()">
+
+        <!-- INNER CONTAINER with FIXED WIDTH to prevent content squashing -->
+        <div class="w-[260px] h-full flex flex-col pb-4 pt-4">
+
+            <!-- Nav Items -->
+            <nav class="flex-1 overflow-y-auto px-3 space-y-1">
+                @for (item of navItems; track item.id) {
+                <a [routerLink]="item.route"
+                    routerLinkActive="bg-zinc-200/60 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-semibold"
+                    [routerLinkActiveOptions]="{exact: item.route === '/'}" (dragover)="onNavDragOver($event, item.id)"
+                    (dragleave)="onNavDragLeave($event, item.id)" (drop)="onNavDrop($event, item.id)"
+                    class="flex items-center gap-3 px-3 py-2.5 rounded-sm text-sm font-medium transition-colors group/item"
+                    [class.bg-blue-50]="item.id === 'library' && libraryDropActive()"
+                    [class.dark:bg-blue-900/20]="item.id === 'library' && libraryDropActive()"
+                    [class.text-blue-600]="item.id === 'library' && libraryDropActive()"
+                    [class.dark:text-blue-400]="item.id === 'library' && libraryDropActive()"
+                    [class.text-zinc-600]="item.id !== 'trash' && !(item.id === 'library' && libraryDropActive())"
+                    [class.dark:text-zinc-400]="item.id !== 'trash' && !(item.id === 'library' && libraryDropActive())"
+                    [class.hover:bg-zinc-100]="item.id !== 'trash'"
+                    [class.dark:hover:bg-zinc-900/50]="item.id !== 'trash'"
+                    [class.hover:text-zinc-900]="item.id !== 'trash'"
+                    [class.dark:hover:text-zinc-200]="item.id !== 'trash'"
+                    [class.bg-red-50]="item.id === 'trash' && trashDropActive()"
+                    [class.dark:bg-red-900/20]="item.id === 'trash' && trashDropActive()"
+                    [class.text-red-600]="item.id === 'trash' && trashDropActive()"
+                    [class.dark:text-red-400]="item.id === 'trash' && trashDropActive()"
+                    [class.text-zinc-600]="item.id === 'trash' && !trashDropActive()"
+                    [class.dark:text-zinc-400]="item.id === 'trash' && !trashDropActive()"
+                    [class.hover:bg-zinc-100]="item.id === 'trash' && !trashDropActive()"
+                    [class.dark:hover:bg-zinc-900/50]="item.id === 'trash' && !trashDropActive()"
+                    [class.hover:text-zinc-900]="item.id === 'trash' && !trashDropActive()"
+                    [class.dark:hover:text-zinc-200]="item.id === 'trash' && !trashDropActive()">
+                    <app-icon [name]="item.icon" [size]="18" [strokeWidth]="2"
+                        class="shrink-0 transition-colors group-hover/item:text-zinc-900 dark:group-hover/item:text-zinc-100"></app-icon>
+                    <span class="truncate">{{ getLabel(item.id) }}</span>
+                    @if (item.id === 'trash' && trashDropActive()) {
+                    <span class="ml-auto text-[10px] font-bold">{{ config.lang() === 'zh' ? '放入回收站' : 'Drop to trash'
+                        }}</span>
+                    }
+                </a>
+                }
+
+                <div class="my-6 mx-2 h-px bg-zinc-200 dark:bg-zinc-800/50"></div>
+
+                <!-- Collections -->
+                <div
+                    class="px-3 mb-3 text-[11px] font-bold text-zinc-400 uppercase tracking-widest flex items-center justify-between">
+                    {{ config.t().nav.collections }}
+                    <button (click)="addNewCollection()"
+                        class="hover:text-zinc-900 dark:hover:text-zinc-200 transition-colors w-5 h-5 flex items-center justify-center rounded-sm hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                        title="新建收藏夹">
+                        <app-icon name="plus" [size]="12"></app-icon>
+                    </button>
+                </div>
+
+                <div class="space-y-0.5" (dragover)="onColDragOver($event)" (drop)="onColContainerDrop($event)">
+                    @for (col of collectionsSorted(); track col.id) {
+                    <div (click)="filterByCollection(col.id)" draggable="true"
+                        (dragstart)="onColDragStart($event, col.id)" 
+                        (dragover)="onColDragOver($event, col.id)"
+                        (dragenter)="onColDragEnter($event, col.id)"
+                        (dragleave)="onColDragLeave($event, col.id)"
+                        (drop)="onColDrop($event, col.id)"
+                        class="w-full flex items-center gap-2 px-3 py-1.5 rounded-sm text-sm font-medium transition-colors group cursor-pointer relative"
+                        [class.text-zinc-500]="dropTargetColId() !== col.id"
+                        [class.dark:text-zinc-400]="dropTargetColId() !== col.id"
+                        [class.hover:bg-zinc-100]="dropTargetColId() !== col.id"
+                        [class.dark:hover:bg-zinc-900/50]="dropTargetColId() !== col.id"
+                        [class.hover:text-zinc-900]="dropTargetColId() !== col.id"
+                        [class.dark:hover:text-zinc-200]="dropTargetColId() !== col.id"
+                        [class.bg-blue-50]="dropTargetColId() === col.id"
+                        [class.dark:bg-blue-900/30]="dropTargetColId() === col.id"
+                        [class.text-blue-600]="dropTargetColId() === col.id"
+                        [class.dark:text-blue-400]="dropTargetColId() === col.id"
+                        [class.ring-2]="dropTargetColId() === col.id"
+                        [class.ring-blue-400]="dropTargetColId() === col.id"
+                        [class.dark:ring-blue-500]="dropTargetColId() === col.id">
+
+                        <app-icon name="folder" [size]="16"
+                            class="text-zinc-400 group-hover:text-zinc-600 dark:group-hover:text-zinc-300 shrink-0"></app-icon>
+
+                        @if (editingCollectionId === col.id) {
+                        <input type="text" [(ngModel)]="editingName" (blur)="saveCollectionName(col.id)"
+                            (keydown.enter)="saveCollectionName(col.id)" (keydown.escape)="cancelEdit()"
+                            (click)="$event.stopPropagation()"
+                            class="flex-1 min-w-0 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-600 rounded-sm px-1 py-0.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                            autofocus>
+                        } @else {
+                        <span class="truncate flex-1 text-left"
+                            (dblclick)="startEditCollection(col.id, col.name); $event.stopPropagation()">{{ col.name }}</span>
+                        <span class="ml-auto text-[10px] font-mono text-zinc-400 dark:text-zinc-500">{{ collectionMediaCount(col.id) }}</span>
+                        }
+
+                        <button (click)="deleteCollection(col.id, $event)"
+                            class="opacity-0 group-hover:opacity-100 p-0.5 rounded-sm hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-400 hover:text-red-500 transition-all ml-2"
+                            title="删除">
+                            <app-icon name="x" [size]="12"></app-icon>
+                        </button>
+                    </div>
+                    }
+                </div>
+            </nav>
+
+            <!-- Sidebar Footer -->
+            <div class="mt-auto px-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 flex flex-col gap-3">
+                <!-- Utility Bar -->
+                <div
+                    class="flex items-center bg-zinc-100 dark:bg-zinc-900/50 rounded-md p-1 border border-zinc-200/50 dark:border-zinc-800">
+                    <button (click)="config.toggleTheme()"
+                        class="flex-1 flex items-center justify-center py-1.5 rounded-sm hover:bg-white dark:hover:bg-zinc-800 shadow-sm transition-all text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 opacity-80 hover:opacity-100"
+                        [title]="config.t().common.theme">
+                        <app-icon [name]="config.theme() === 'dark' ? 'moon' : 'sun'" [size]="14"></app-icon>
+                    </button>
+                    <div class="w-px h-3 bg-zinc-200 dark:bg-zinc-800 mx-1"></div>
+                    <button (click)="toggleLanguage()"
+                        class="flex-1 flex items-center justify-center py-1.5 rounded-sm hover:bg-white dark:hover:bg-zinc-800 shadow-sm transition-all text-xs font-bold font-mono text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 opacity-80 hover:opacity-100"
+                        [title]="config.t().common.language">
+                        {{ config.lang() === 'en' ? 'EN' : '中' }}
+                    </button>
+                    <div class="w-px h-3 bg-zinc-200 dark:bg-zinc-800 mx-1"></div>
+                    <button (click)="openSettings()"
+                        class="flex-1 flex items-center justify-center py-1.5 rounded-sm hover:bg-white dark:hover:bg-zinc-800 shadow-sm transition-all text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 opacity-80 hover:opacity-100"
+                        [title]="getLabel('settings')">
+                        <app-icon name="settings" [size]="14"></app-icon>
+                    </button>
+                </div>
+
+                <!-- User Profile -->
+                <div class="flex items-center gap-3 cursor-pointer group p-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-md transition-colors border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800"
+                    (click)="config.aboutOpen.set(true)">
+                    <div
+                        class="w-8 h-8 rounded-sm bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center text-xs font-bold text-zinc-500 group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                        U</div>
+                    <div class="flex-1 overflow-hidden">
+                        <div class="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">{{
+                            state.userProfile().name }}</div>
+                        <div class="text-[10px] text-zinc-400 truncate">{{ config.t().user.plan }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- 2. RIGHT: Content Area (Tabs + Page) - Uses margin-left to avoid sidebar -->
+    <div class="flex-1 flex flex-col min-w-0 bg-[#fbfbfb] dark:bg-[#0c0c0e] relative h-full transition-[margin-left] duration-300 ease-in-out"
+        [class.ml-[260px]]="!config.sidebarCollapsed()" [class.ml-0]="config.sidebarCollapsed()">
+
+        <!-- A. Tabs Bar -->
+        <div
+            class="h-[40px] flex items-center px-3 gap-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 select-none bg-[#fbfbfb] dark:bg-[#0c0c0e]">
+
+            <!-- Spacer for fixed header overlap when collapsed -->
+            @if (config.sidebarCollapsed()) {
+            <div class="w-[60px] shrink-0"></div>
+            }
+
+
+            <!-- Tabs List -->
+            <div class="flex-1 flex items-center overflow-x-auto no-scrollbar gap-1 mx-2 h-full pt-1.5">
+                @for (tab of layout.tabs(); track tab.id) {
+                @let isActive = layout.activeTabId() === tab.id;
+                <div data-no-drag (click)="layout.setActiveTab(tab.id)" draggable="true"
+                    (dragstart)="onTabDragStart($event, tab.id)" (dragover)="onTabDragOver($event)"
+                    (drop)="onTabDrop($event, tab.id)"
+                    class="group relative flex items-center gap-2 px-3 h-full max-w-[200px] min-w-[120px] text-xs font-medium rounded-t-sm cursor-grab active:cursor-grabbing transition-all border-x border-t select-none"
+                    [class.bg-white]="isActive" [class.dark:bg-black]="isActive" [class.text-zinc-900]="isActive"
+                    [class.dark:text-zinc-100]="isActive" [class.border-zinc-200]="isActive"
+                    [class.dark:border-zinc-800]="isActive" [class.border-transparent]="!isActive"
+                    [class.hover:bg-zinc-200/50]="!isActive" [class.dark:hover:bg-zinc-800/50]="!isActive"
+                    [class.text-zinc-500]="!isActive">
+
+                    <app-icon [name]="tab.icon || 'file'" [size]="14" [class.text-zinc-400]="!isActive"
+                        [class.text-zinc-900]="isActive" [class.dark:text-zinc-100]="isActive"></app-icon>
+                    <span class="truncate flex-1">{{ tab.title }}</span>
+
+                    @if(tab.isClosable) {
+                    <button data-no-drag (click)="layout.closeTab(tab.id, $event)"
+                        class="opacity-0 group-hover:opacity-100 p-0.5 rounded-sm hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-all">
+                        <app-icon name="x" [size]="12"></app-icon>
+                    </button>
+                    }
+                </div>
+                }
+
+                <button data-no-drag (click)="layout.addTab()"
+                    class="ml-1 p-1.5 text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-sm transition-colors mb-1"
+                    [title]="config.t().common.newTab">
+                    <app-icon name="plus" [size]="14"></app-icon>
+                </button>
+            </div>
+
+             @if (isTauri() && !isMacOS()) {
+             <!-- Dedicated drag strip (avoid conflicting with draggable tabs) -->
+             <div class="w-[140px] h-[40px] shrink-0 select-none" draggable="false" data-tauri-drag-region></div>
+             }
+
+            @if (isTauri() && !isMacOS()) {
+            <div class="flex items-center gap-0 shrink-0" data-no-drag>
+                <button (click)="winMinimize()"
+                    class="w-12 h-[40px] flex items-center justify-center hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">
+                    <app-icon name="minus" [size]="14"></app-icon>
+                </button>
+                <button (click)="winToggleMaximize()"
+                    class="w-12 h-[40px] flex items-center justify-center hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">
+                    <app-icon name="square" [size]="12"></app-icon>
+                </button>
+                <button (click)="winClose()"
+                    class="w-12 h-[40px] flex items-center justify-center hover:bg-red-500 hover:text-white text-zinc-500 dark:text-zinc-400 transition-colors">
+                    <app-icon name="x" [size]="14"></app-icon>
+                </button>
+            </div>
+            }
+
+        </div>
+
+        <!-- B. Page Stage (Main Content) -->
+        <div class="flex-1 flex flex-col min-w-0 bg-white dark:bg-black overflow-hidden relative">
+            <!-- Content Slot -->
+            <div class="flex-1 overflow-y-auto scroll-smooth relative">
+                <router-outlet></router-outlet>
+            </div>
+        </div>
+
+    </div>
+</div>

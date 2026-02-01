@@ -1,0 +1,63 @@
+# Application command permissions (Vecho Studio)
+#
+# These are used by Tauri v2 ACL (capabilities).
+
+[[permission]]
+identifier = "allow-get-data-root"
+description = "Enables the get_data_root command."
+commands.allow = ["get_data_root"]
+
+[[permission]]
+identifier = "allow-load-state"
+description = "Enables the load_state command."
+commands.allow = ["load_state"]
+
+[[permission]]
+identifier = "allow-save-state"
+description = "Enables the save_state command."
+commands.allow = ["save_state"]
+
+[[permission]]
+identifier = "allow-import-url"
+description = "Enables the import_url command."
+commands.allow = ["import_url"]
+
+[[permission]]
+identifier = "allow-upload-begin"
+description = "Enables the upload_begin command."
+commands.allow = ["upload_begin"]
+
+[[permission]]
+identifier = "allow-upload-chunk"
+description = "Enables the upload_chunk command."
+commands.allow = ["upload_chunk"]
+
+[[permission]]
+identifier = "allow-upload-finish"
+description = "Enables the upload_finish command."
+commands.allow = ["upload_finish"]
+
+[[permission]]
+identifier = "allow-transcribe-media"
+description = "Enables the transcribe_media command."
+commands.allow = ["transcribe_media"]
+
+[[permission]]
+identifier = "allow-optimize-transcription"
+description = "Enables the optimize_transcription command."
+commands.allow = ["optimize_transcription"]
+
+[[permission]]
+identifier = "allow-summarize-media"
+description = "Enables the summarize_media command."
+commands.allow = ["summarize_media"]
+
+[[permission]]
+identifier = "allow-chat-media"
+description = "Enables the chat_media command."
+commands.allow = ["chat_media"]
+
+[[permission]]
+identifier = "allow-export-media"
+description = "Enables the export_media command."
+commands.allow = ["export_media"]
