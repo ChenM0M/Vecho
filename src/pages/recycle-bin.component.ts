@@ -4,6 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { IconComponent } from '../components/icons';
 import { ConfigService } from '../services/config.service';
 import { StateService } from '../services/state.service';
+import { BackendService } from '../services/backend.service';
+import { ToastService } from '../services/toast.service';
 import type { DeletedItem } from '../types';
 
 @Component({
@@ -105,6 +107,8 @@ import type { DeletedItem } from '../types';
 export class RecycleBinComponent {
   config = inject(ConfigService);
   state = inject(StateService);
+  backend = inject(BackendService);
+  toast = inject(ToastService);
 
   query = signal('');
   queryValue = '';
@@ -121,7 +125,21 @@ export class RecycleBinComponent {
     this.state.restoreFromTrash(id);
   }
 
-  deleteForever(id: string) {
+  async deleteForever(id: string) {
+    const item = this.state.deletedItems().find(i => i.id === id);
+    if (item?.type === 'media') {
+      const mediaId = (item.originalId || (item.data as any)?.id || '').toString();
+      if (mediaId) {
+        try {
+          if (await this.backend.isAvailable()) {
+            await this.backend.deleteMediaStorage(mediaId);
+          }
+        } catch (e) {
+          console.error('deleteMediaStorage failed', e);
+          this.toast.error('删除媒体文件失败（部分文件可能仍在占用）');
+        }
+      }
+    }
     this.state.permanentlyDelete(id);
   }
 
@@ -130,8 +148,33 @@ export class RecycleBinComponent {
     for (const id of ids) this.state.restoreFromTrash(id);
   }
 
-  emptyTrash() {
+  async emptyTrash() {
+    const items = [...this.filtered()];
+    const mediaIds = items
+      .filter(i => i.type === 'media')
+      .map(i => (i.originalId || (i.data as any)?.id || '').toString())
+      .filter(Boolean);
+
+    if (mediaIds.length) {
+      try {
+        if (await this.backend.isAvailable()) {
+          for (const mid of mediaIds) {
+            try {
+              await this.backend.deleteMediaStorage(mid);
+            } catch (e) {
+              console.error('deleteMediaStorage failed', e);
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     this.state.emptyTrash();
+    if (mediaIds.length) {
+      this.toast.success('已清空回收站');
+    }
   }
 
   typeLabel(type: DeletedItem['type']): string {

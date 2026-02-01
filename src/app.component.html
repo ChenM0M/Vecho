@@ -1,5 +1,5 @@
 <div
-    class="flex h-screen w-screen overflow-hidden bg-white dark:bg-black text-zinc-900 dark:text-zinc-100 font-sans selection:bg-zinc-900 selection:text-white dark:selection:bg-white dark:selection:text-black">
+    class="flex h-screen w-screen overflow-hidden bg-white dark:bg-black text-zinc-900 dark:text-zinc-100 font-sans selection:bg-blue-200 selection:text-zinc-900 dark:selection:bg-blue-500/30 dark:selection:text-white">
 
     <!-- Global Toast -->
     <app-toast-container></app-toast-container>
@@ -52,7 +52,7 @@
     <!-- FIXED: Logo + Toggle Area (Always at Top-Left, Never Moves) -->
     <div class="fixed left-0 top-0 h-[40px] z-50 flex items-center px-3 gap-2 bg-[#fbfbfb] dark:bg-black border-b border-zinc-200 dark:border-zinc-800 select-none"
         [class.w-[260px]]="!config.sidebarCollapsed()" [class.w-auto]="config.sidebarCollapsed()"
-        [class.border-r]="!config.sidebarCollapsed()">
+        [class.border-r]="!config.sidebarCollapsed()" (mousedown)="winMaybeStartDragging($event)">
 
         <!-- Logo -->
         <div class="flex items-center gap-2.5">
@@ -242,7 +242,8 @@
 
         <!-- A. Tabs Bar -->
         <div
-            class="h-[40px] flex items-center px-3 gap-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 select-none bg-[#fbfbfb] dark:bg-[#0c0c0e]">
+            class="h-[40px] flex items-center px-3 gap-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 select-none bg-[#fbfbfb] dark:bg-[#0c0c0e]"
+            (mousedown)="winMaybeStartDragging($event)">
 
             <!-- Spacer for fixed header overlap when collapsed -->
             @if (config.sidebarCollapsed()) {

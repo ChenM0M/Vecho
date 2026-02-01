@@ -8,6 +8,7 @@ import { ConfigService } from '../services/config.service';
 import { StateService } from '../services/state.service';
 import { TauriService } from '../services/tauri.service';
 import { BackendService } from '../services/backend.service';
+import type { SubtitlesFile, SubtitleTrack, SubtitleSegment } from '../services/backend.service';
 import { ToastService } from '../services/toast.service';
 import { ConfirmService } from '../services/confirm.service';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
@@ -118,6 +119,7 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
           </div>
         }
 
+        @if (!pseudoFullscreen()) {
         <!-- Top Bar: Clean & Functional -->
          <div class="min-h-10 py-1 flex items-start justify-between px-5 bg-white dark:bg-[#09090b] border-b border-zinc-100 dark:border-zinc-800 shrink-0 z-10">
           <div class="flex items-start gap-4 min-w-0">
@@ -128,12 +130,19 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
               <div class="flex flex-col justify-center min-w-0">
                   <h1 class="text-[14px] font-bold text-zinc-900 dark:text-zinc-100 tracking-tight leading-snug mb-0 vecho-clamp-1 max-w-[62vw]">{{ m.name }}</h1>
                  <div class="flex items-center gap-2 text-xs text-zinc-500 font-medium">
-                  @if (m.source.type === 'online') {
-                    <span class="flex items-center gap-1 text-blue-600 dark:text-blue-400">
-                      <app-icon name="link" [size]="10"></app-icon> {{ m.source.platform }}
-                    </span>
-                    <span class="text-zinc-300">•</span>
-                  }
+                   @if (m.source.type === 'online') {
+                     <a
+                       class="flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline"
+                       [href]="m.source.url"
+                       target="_blank"
+                       rel="noreferrer"
+                       (click)="openExternalUrl(m.source.url, $event)"
+                       title="打开原始链接"
+                     >
+                       <app-icon name="link" [size]="10"></app-icon> {{ m.source.platform }}
+                     </a>
+                     <span class="text-zinc-300">•</span>
+                   }
                    <span>{{ formatTime(currentTime()) }} / {{ formatTime(duration()) }}</span>
                 </div>
 
@@ -192,6 +201,7 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
                 @if (moreMenuOpen()) {
                   <div class="absolute right-0 mt-2 w-44 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl py-1 z-30">
                     <button class="w-full text-left px-3 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200" (click)="exportMedia(); moreMenuOpen.set(false)">导出…</button>
+                    <button class="w-full text-left px-3 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200" (click)="openStorageLocation(); moreMenuOpen.set(false)">打开存储位置</button>
                     <button class="w-full text-left px-3 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200" (click)="config.settingsOpen.set(true); moreMenuOpen.set(false)">设置</button>
                     <div class="h-px bg-zinc-100 dark:bg-zinc-800 my-1"></div>
                     <button class="w-full text-left px-3 py-2 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400" (click)="deleteMedia(); moreMenuOpen.set(false)">删除</button>
@@ -200,12 +210,13 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
               </div>
            </div>
         </div>
+        }
 
         <!-- Main Workspace -->
         <div class="flex-1 flex overflow-hidden">
           
           <!-- Left: Player & Visualization Stage -->
-           <div class="flex-1 flex flex-col bg-[#fafafa] dark:bg-[#0c0c0e] overflow-hidden relative p-6">
+           <div class="flex-1 flex flex-col bg-[#fafafa] dark:bg-[#0c0c0e] overflow-hidden relative" [class.p-6]="!pseudoFullscreen()" [class.p-0]="pseudoFullscreen()">
 
              @if (activeJobBanner(); as jb) {
                <div class="absolute top-4 left-4 right-4 z-40 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/90 dark:bg-zinc-900/80 backdrop-blur-md p-3">
@@ -217,11 +228,12 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
                           jb.type === 'transcription' ? '转写'
                           : jb.type === 'optimize' ? '转写优化'
                           : jb.type === 'summary' ? 'AI 总结'
-                          : jb.type === 'download' ? '下载'
-                          : jb.type === 'export' ? '导出'
-                          : jb.type === 'import' ? '导入'
-                          : '任务'
-                        }}：{{ jb.message || '处理中…' }}
+                           : jb.type === 'download' ? '下载'
+                           : jb.type === 'export' ? '导出'
+                           : jb.type === 'import' ? '导入'
+                           : jb.type === 'subtitle' ? '字幕'
+                           : '任务'
+                         }}：{{ jb.message || '处理中…' }}
                       </div>
                    </div>
                    <div class="text-xs font-mono text-zinc-500 tabular-nums">{{ jb.progress }}%</div>
@@ -236,13 +248,25 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
               
               @if (m.type === 'video') {
                 <!-- Video Player: Immersive with subtle border -->
-                  <div #playerContainer class="flex-1 w-full bg-black rounded-xl shadow-sm overflow-hidden relative group ring-1 ring-zinc-200 dark:ring-zinc-800 flex items-center justify-center">
+                    <div
+                      #playerContainer
+                      class="vecho-player-surface flex-1 w-full bg-black rounded-xl shadow-sm overflow-hidden relative group ring-1 ring-zinc-200 dark:ring-zinc-800 flex items-center justify-center"
+                      (click)="onPlayerStageClick($event)"
+                      (mousemove)="onPlayerMouseMove()"
+                      (mouseleave)="onPlayerMouseLeave()"
+                      [class.cursor-none]="isPlaying() && !playerControlsVisible()"
+                      [class.vecho-pseudo-fullscreen]="pseudoFullscreen()"
+                      [class.rounded-none]="isFullscreen()"
+                      [class.ring-0]="isFullscreen()"
+                    >
                      @if (playerSrc(); as src) {
-                       <video
-                         #videoEl
-                         class="absolute inset-0 w-full h-full object-contain bg-black pointer-events-none"
-                         [src]="src"
-                         [attr.poster]="m.thumbnail || null"
+                        <video
+                          #videoEl
+                          class="absolute inset-0 w-full h-full bg-black pointer-events-none"
+                          [class.object-contain]="!isFullscreen()"
+                          [class.object-cover]="isFullscreen()"
+                          [src]="src"
+                          [attr.poster]="m.thumbnail || null"
                          preload="metadata"
                          playsinline
                          (timeupdate)="onTimeUpdate($event)"
@@ -253,18 +277,45 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
                          (ended)="onEnded()"
                          (error)="onMediaError($event)"
                        ></video>
-                     } @else {
-                       @if (m.thumbnail) {
-                         <img [src]="m.thumbnail" class="absolute inset-0 w-full h-full object-cover opacity-40 grayscale" alt="Cover" draggable="false" />
-                       } @else {
-                         <div class="absolute inset-0 w-full h-full flex items-center justify-center bg-black/40">
-                           <app-icon name="video" [size]="56" class="text-white/30"></app-icon>
-                         </div>
-                       }
-                     }
-                     
-                     @if (!isPlaying()) {
-                     <div class="z-10 text-center pointer-events-none">
+                      } @else {
+                        @if (m.thumbnail) {
+                          <img [src]="m.thumbnail" class="absolute inset-0 w-full h-full object-cover opacity-40 grayscale" alt="Cover" draggable="false" />
+                        } @else {
+                          <div class="absolute inset-0 w-full h-full flex items-center justify-center bg-black/40">
+                            <app-icon name="video" [size]="56" class="text-white/30"></app-icon>
+                          </div>
+                        }
+                      }
+
+                      @if (ccDisplayText(); as cc) {
+                        <div
+                          class="absolute px-4 select-none"
+                          [ngStyle]="ccOverlayStyle()"
+                          [style.pointerEvents]="ccSettingsOpen() ? 'auto' : 'none'"
+                          style="left: var(--cc-x); top: var(--cc-y); transform: translate(-50%, -50%);"
+                        >
+                          <div
+                            class="max-w-4xl text-center font-medium drop-shadow-[0_2px_10px_rgba(0,0,0,0.65)] backdrop-blur-sm rounded-lg px-4 py-2 relative"
+                            [class.cursor-move]="ccSettingsOpen()"
+                            [style.outline]="ccSettingsOpen() ? '2px dashed rgba(255,255,255,0.35)' : null"
+                            [style.outlineOffset.px]="ccSettingsOpen() ? 2 : null"
+                            style="font-size: var(--cc-font-size); color: var(--cc-color); background-color: rgba(0,0,0,var(--cc-bg));"
+                            (mousedown)="ccDragStart($event)"
+                          >
+                            <span class="whitespace-pre-line">{{ cc }}</span>
+                            @if (ccSettingsOpen()) {
+                              <div
+                                class="absolute -bottom-2 -right-2 w-5 h-5 rounded bg-white/20 border border-white/30 cursor-nwse-resize"
+                                title="拖动缩放"
+                                (mousedown)="ccResizeStart($event)"
+                              ></div>
+                            }
+                          </div>
+                        </div>
+                      }
+                      
+                      @if (!isPlaying()) {
+                      <div class="z-10 text-center pointer-events-none">
                           <div
                             class="w-16 h-16 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-4 scale-95 group-hover:scale-100 transition-transform cursor-pointer pointer-events-auto hover:bg-white/20"
                             (click)="togglePlayback($event)"
@@ -292,7 +343,11 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
                      }
 
                    <!-- Bottom Controls Overlay -->
-                   <div class="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                    <div
+                      class="vecho-player-controls absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 via-black/40 to-transparent transition-opacity duration-200"
+                      [class.opacity-0]="!playerControlsVisible()"
+                      [class.pointer-events-none]="!playerControlsVisible()"
+                    >
                       <div class="flex items-center gap-4 mb-2">
                           <span class="text-xs font-mono text-zinc-300">{{ formatTime(currentTime()) }}</span>
                            <div class="flex-1 h-1 bg-white/20 rounded-full cursor-pointer relative group/scrubber hover:h-1.5 transition-[height]" (click)="onSeek($event, duration())">
@@ -318,18 +373,93 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
                               <button (click)="addQuickBookmark()" class="bg-white/10 hover:bg-white/20 p-1.5 rounded text-white transition-colors" [title]="config.t().common.bookmark">
                                  <app-icon name="bookmark" [size]="16"></app-icon>
                               </button>
-                              <button (click)="addNote()" class="bg-white/10 hover:bg-white/20 p-1.5 rounded text-white transition-colors" [title]="config.t().common.note">
-                                 <app-icon name="file-text" [size]="16"></app-icon>
-                              </button>
-                              <button (click)="togglePiP($event)" class="bg-white/10 hover:bg-white/20 p-1.5 rounded text-white transition-colors"
-                                [class.opacity-40]="!pipAvailable()" [class.cursor-not-allowed]="!pipAvailable()" title="画中画">
-                                 <app-icon name="pip" [size]="16"></app-icon>
-                              </button>
+                               <button (click)="addNote()" class="bg-white/10 hover:bg-white/20 p-1.5 rounded text-white transition-colors" [title]="config.t().common.note">
+                                  <app-icon name="file-text" [size]="16"></app-icon>
+                               </button>
+                               <button (click)="toggleCcMenu($event)" class="bg-white/10 hover:bg-white/20 px-2 py-1.5 rounded text-white transition-colors text-[11px] font-black tracking-wider" [class.opacity-80]="ccEnabled()" title="字幕/CC">
+                                  CC
+                               </button>
+                               <button (click)="togglePiP($event)" class="bg-white/10 hover:bg-white/20 p-1.5 rounded text-white transition-colors"
+                                 [class.opacity-40]="!pipAvailable()" [class.cursor-not-allowed]="!pipAvailable()" title="画中画">
+                                  <app-icon name="pip" [size]="16"></app-icon>
+                               </button>
                               <button (click)="toggleFullscreen($event)" class="bg-white/10 hover:bg-white/20 p-1.5 rounded text-white transition-colors" title="全屏">
                                  <app-icon name="maximize" [size]="16"></app-icon>
                               </button>
-                          </div>
+                    </div>
+
+                    @if (ccMenuOpen()) {
+                      <div class="absolute bottom-[90px] right-6 z-30" (click)="$event.stopPropagation()">
+                        <div class="w-56 rounded-lg border border-white/10 bg-black/70 backdrop-blur-md shadow-2xl overflow-hidden">
+                          <button class="w-full text-left px-3 py-2 text-[12px] font-semibold text-white/90 hover:bg-white/10" (click)="setCcTrack('off', $event)">关闭字幕</button>
+                          <div class="h-px bg-white/10"></div>
+                          @for (tr of availableSubtitleTracks(); track tr.id) {
+                            <button
+                              class="w-full text-left px-3 py-2 text-[12px] text-white/90 hover:bg-white/10 flex items-center justify-between"
+                              (click)="setCcTrack(tr.id, $event)"
+                            >
+                              <span class="truncate">{{ tr.label || tr.id }}</span>
+                              @if (subtitleTrackId() === tr.id && ccEnabled()) {
+                                <span class="text-[10px] font-black tracking-wider text-white/70">ON</span>
+                              }
+                            </button>
+                          }
+                          <div class="h-px bg-white/10"></div>
+                          <button class="w-full text-left px-3 py-2 text-[12px] text-white/90 hover:bg-white/10" (click)="ccSettingsOpen.set(true); ccMenuOpen.set(false)">字幕样式…</button>
+                          <button class="w-full text-left px-3 py-2 text-[12px] text-white/90 hover:bg-white/10" (click)="translateSubtitlesToZh(); ccMenuOpen.set(false)">一键翻译中文</button>
+                        </div>
                       </div>
+                    }
+
+                    @if (ccSettingsOpen()) {
+                      <div class="absolute inset-0 z-40 pointer-events-none">
+                        <div class="absolute inset-0 bg-black/30"></div>
+                        <div class="absolute right-6 bottom-[90px] w-80 rounded-xl border border-white/10 bg-black/75 backdrop-blur-md shadow-2xl p-4 pointer-events-auto">
+                          <div class="flex items-center justify-between">
+                            <div class="text-sm font-bold text-white/90">字幕样式（可在画面中拖动/缩放）</div>
+                            <button class="p-1 rounded hover:bg-white/10 text-white/70" (click)="ccSettingsOpen.set(false)"><app-icon name="x" [size]="14"></app-icon></button>
+                          </div>
+
+                          <div class="mt-3 space-y-3 text-white/80">
+                            <div>
+                              <div class="flex items-center justify-between text-[11px] font-semibold"><span>字体大小</span><span class="font-mono">{{ ccStyle().fontSize }}px</span></div>
+                              <input type="range" min="12" max="72" [ngModel]="ccStyle().fontSize" (ngModelChange)="ccStyle.set({ ...ccStyle(), fontSize: +$event })" class="w-full" />
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3">
+                              <div>
+                                <div class="flex items-center justify-between text-[11px] font-semibold"><span>水平位置</span><span class="font-mono">{{ Math.round((ccStyle().x || 0.5) * 100) }}%</span></div>
+                                <input type="range" min="5" max="95" [ngModel]="Math.round((ccStyle().x || 0.5) * 100)" (ngModelChange)="ccStyle.set({ ...ccStyle(), x: (+$event) / 100 })" class="w-full" />
+                              </div>
+                              <div>
+                                <div class="flex items-center justify-between text-[11px] font-semibold"><span>垂直位置</span><span class="font-mono">{{ Math.round((ccStyle().y || 0.85) * 100) }}%</span></div>
+                                <input type="range" min="5" max="95" [ngModel]="Math.round((ccStyle().y || 0.85) * 100)" (ngModelChange)="ccStyle.set({ ...ccStyle(), y: (+$event) / 100 })" class="w-full" />
+                              </div>
+                            </div>
+
+                            <div>
+                              <div class="flex items-center justify-between text-[11px] font-semibold"><span>背景透明</span><span class="font-mono">{{ ccStyle().bgOpacity }}</span></div>
+                              <input type="range" min="0" max="0.85" step="0.05" [ngModel]="ccStyle().bgOpacity" (ngModelChange)="ccStyle.set({ ...ccStyle(), bgOpacity: +$event })" class="w-full" />
+                            </div>
+
+                            <div>
+                              <div class="flex items-center justify-between text-[11px] font-semibold"><span>文字颜色</span></div>
+                              <div class="mt-1 flex items-center gap-2">
+                                <button class="px-2 py-1 rounded bg-white/10 hover:bg-white/15 text-[11px]" (click)="ccStyle.set({ ...ccStyle(), color: '#ffffff' })">白</button>
+                                <button class="px-2 py-1 rounded bg-white/10 hover:bg-white/15 text-[11px]" (click)="ccStyle.set({ ...ccStyle(), color: '#ffe08a' })">黄</button>
+                                <button class="px-2 py-1 rounded bg-white/10 hover:bg-white/15 text-[11px]" (click)="ccStyle.set({ ...ccStyle(), color: '#a7f3d0' })">绿</button>
+                                <input type="color" class="w-9 h-8 bg-transparent" [ngModel]="ccStyle().color" (ngModelChange)="ccStyle.set({ ...ccStyle(), color: $event })" />
+                              </div>
+                            </div>
+
+                            <div class="flex items-center justify-end gap-2 pt-1">
+                              <button class="h-8 px-3 rounded-md text-[11px] font-semibold bg-white/10 hover:bg-white/15" (click)="resetCcStyle()">重置</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    }
+                 </div>
                    </div>
                 </div>
               } @else {
@@ -435,7 +565,7 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
           </div>
 
           <!-- Right: Professional Tab Panel -->
-          <div class="w-[420px] border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#0c0c0e] flex flex-col shrink-0">
+          <div class="w-[420px] border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#0c0c0e] flex flex-col shrink-0" [class.hidden]="pseudoFullscreen()">
             
             <!-- Tab Headers: Clean Underline -->
             <div class="flex items-center px-6 border-b border-zinc-100 dark:border-zinc-800">
@@ -624,15 +754,34 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
                 <!-- Transcript Tab -->
                 @if (activeTab() === 'transcript') {
                    <div class="p-6">
-                 <div class="flex items-center justify-between mb-4">
-                   <div class="text-xs font-bold text-zinc-700 dark:text-zinc-200">转写</div>
-                   <div class="flex items-center gap-2">
-                          <button
-                            class="h-8 px-3 rounded-md text-xs font-semibold border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-                            (click)="config.settingsOpen.set(true)"
-                          >
-                            设置
-                          </button>
+                    <div class="flex items-center justify-between mb-4">
+                    <div class="text-xs font-bold text-zinc-700 dark:text-zinc-200">转写 / 字幕</div>
+                    <div class="flex items-center gap-2">
+                           <select
+                             class="h-8 px-2 rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs text-zinc-700 dark:text-zinc-200"
+                             [ngModel]="subtitleTrackId()"
+                             (ngModelChange)="subtitleTrackId.set($event)"
+                             [disabled]="availableSubtitleTracks().length === 0"
+                             title="选择字幕轨"
+                           >
+                             @for (tr of availableSubtitleTracks(); track tr.id) {
+                               <option [value]="tr.id">{{ tr.label || tr.id }}</option>
+                             }
+                           </select>
+                           <button
+                             class="h-8 px-3 rounded-md text-xs font-semibold border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                             (click)="translateSubtitlesToZh()"
+                             [disabled]="translatingSubtitles() || subtitleRunning() || !m.transcription || !tauri.isTauri()"
+                             title="一次调用 AI 翻译为中文轨（生成 subtitles.json）"
+                           >
+                             @if (translatingSubtitles()) { 翻译中… } @else { 翻译中文 }
+                           </button>
+                           <button
+                             class="h-8 px-3 rounded-md text-xs font-semibold border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                             (click)="config.settingsOpen.set(true)"
+                           >
+                             设置
+                           </button>
                           <button
                             class="h-8 px-3 rounded-md text-xs font-semibold border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             (click)="runOptimizeTranscription()"
@@ -695,6 +844,32 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
                         }
                       }
 
+                      @if (subtitleJob(); as sj) {
+                        @if (sj.status === 'pending' || sj.status === 'processing') {
+                          <div class="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+                            <div class="flex items-center justify-between gap-3">
+                              <div class="flex items-center gap-2 min-w-0">
+                                <app-icon name="languages" [size]="14" class="text-zinc-400 shrink-0"></app-icon>
+                                <div class="text-xs font-semibold text-zinc-700 dark:text-zinc-200 truncate">
+                                  {{ sj.message || '字幕翻译中…' }}
+                                </div>
+                              </div>
+                              <div class="text-xs font-mono text-zinc-500 tabular-nums">{{ sj.progress }}%</div>
+                            </div>
+                            <div class="mt-3 h-1.5 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
+                              <div class="h-full bg-zinc-900 dark:bg-white transition-all duration-300" [style.width.%]="sj.progress"></div>
+                            </div>
+                          </div>
+                        }
+
+                        @if (sj.status === 'failed') {
+                          <div class="mb-4 rounded-lg border border-red-200 dark:border-red-900/40 bg-white dark:bg-zinc-900 p-4">
+                            <div class="text-sm font-semibold text-red-700 dark:text-red-300">字幕翻译失败</div>
+                            <div class="mt-1 text-xs text-red-600 dark:text-red-300/80 whitespace-pre-wrap">{{ sj.error || sj.message || '字幕翻译失败' }}</div>
+                          </div>
+                        }
+                      }
+
                       @if (!tauri.isTauri()) {
                         <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 text-sm text-zinc-500">
                           Web 预览模式不支持本地转写；请在桌面端运行。
@@ -712,14 +887,14 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
                                </div>
                           </div>
                         } @else {
-                          <div class="space-y-1">
-                            @for (seg of m.transcription.segments; track seg.id) {
-                              <div class="flex gap-4 p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800/50 cursor-pointer transition-colors group" (click)="seekTo(seg.start)">
-                                <span class="text-xs font-mono text-zinc-400 shrink-0 w-10 pt-0.5">{{ formatTime(seg.start) }}</span>
-                                <p class="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed group-hover:text-zinc-900 dark:group-hover:text-zinc-100">{{ seg.text }}</p>
-                              </div>
-                            }
-                          </div>
+                           <div class="space-y-1">
+                             @for (seg of transcriptSegments(); track seg.id) {
+                               <div class="flex gap-4 p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800/50 cursor-pointer transition-colors group" (click)="seekTo(seg.start)">
+                                 <span class="text-xs font-mono text-zinc-400 shrink-0 w-10 pt-0.5">{{ formatTime(seg.start) }}</span>
+                                 <p class="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed group-hover:text-zinc-900 dark:group-hover:text-zinc-100">{{ seg.text }}</p>
+                               </div>
+                             }
+                           </div>
                         }
                       }
                    </div>
@@ -912,32 +1087,64 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
                                 <app-icon name="trash" [size]="16"></app-icon>
                               </button>
                             </div>
-                            <div class="mt-2 text-[11px] text-zinc-500">会自动引用转写片段作为上下文</div>
-                          }
+                             <div class="mt-2 flex items-center gap-3 text-[11px] text-zinc-500">
+                               <label class="inline-flex items-center gap-1 cursor-pointer select-none">
+                                 <input type="checkbox" class="accent-zinc-900" [checked]="chatIncludeTranscription()" (change)="chatIncludeTranscription.set($any($event.target).checked)" />
+                                 <span>包含转写</span>
+                               </label>
+                               <label class="inline-flex items-center gap-1 cursor-pointer select-none">
+                                 <input type="checkbox" class="accent-zinc-900" [checked]="chatIncludeSummary()" (change)="chatIncludeSummary.set($any($event.target).checked)" />
+                                 <span>包含总结</span>
+                               </label>
+                               <span class="text-zinc-400">• 默认用 {{ config.lang() === 'zh' ? '中文' : 'English' }} 回复</span>
+                             </div>
+                           }
                         } @else {
                           <div class="text-sm text-zinc-500">暂无对话；点击上方“新建”。</div>
                         }
                       </div>
 
-                      <div class="flex-1 overflow-y-auto p-4 space-y-3">
-                        @if (activeConversation(); as chat) {
-                          @if (chat.messages.length === 0) {
-                            <div class="text-sm text-zinc-500">输入问题开始对话。</div>
-                          }
-                          @for (msg of chat.messages; track msg.id) {
-                            <div class="flex" [class.justify-end]="msg.role === 'user'">
+                       <div class="flex-1 overflow-y-auto p-4 space-y-3">
+                         @if (activeConversation(); as chat) {
+                           @if (chat.messages.length === 0) {
+                             <div class="text-sm text-zinc-500">输入问题开始对话。</div>
+                           }
+                           @for (msg of chat.messages; track msg.id) {
+                             <div class="flex" [class.justify-end]="msg.role === 'user'">
                               <div
                                 class="max-w-[90%] rounded-2xl px-4 py-2"
                                 [class]="msg.role === 'user'
                                   ? 'bg-zinc-900 text-white dark:bg-white dark:text-black'
                                   : 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-100'"
                               >
-                                <app-markdown variant="compact" [content]="msg.content" [title]="m.name"></app-markdown>
+                                @if (msg.role === 'assistant' && (msg.content || '').length > 700) {
+                                  <div class="flex items-center justify-between mb-1">
+                                    <span class="text-[10px] font-bold text-zinc-500">AI</span>
+                                    <button class="text-[10px] font-semibold text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100" (click)="toggleChatMsgCollapse(msg.id, $event)">
+                                      {{ isChatMsgCollapsed(msg.id) ? '展开' : '收起' }}
+                                    </button>
+                                  </div>
+                                  <app-markdown variant="compact" [content]="isChatMsgCollapsed(msg.id) ? chatMsgPreview(msg.content) : msg.content" [title]="m.name"></app-markdown>
+                                } @else {
+                                  <app-markdown variant="compact" [content]="msg.content" [title]="m.name"></app-markdown>
+                                }
                               </div>
                             </div>
-                          }
-                        }
-                      </div>
+                           }
+
+                           @if (chatSending()) {
+                             <div class="flex">
+                               <div class="max-w-[90%] rounded-2xl px-4 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-100">
+                                 <div class="flex items-center gap-1.5">
+                                   <span class="vecho-typing-dot w-1.5 h-1.5 rounded-full bg-zinc-400"></span>
+                                   <span class="vecho-typing-dot w-1.5 h-1.5 rounded-full bg-zinc-400"></span>
+                                   <span class="vecho-typing-dot w-1.5 h-1.5 rounded-full bg-zinc-400"></span>
+                                 </div>
+                               </div>
+                             </div>
+                           }
+                         }
+                       </div>
 
                       <div class="p-4 border-t border-zinc-100 dark:border-zinc-800 bg-white dark:bg-[#0c0c0e]">
                         <div class="flex gap-2 items-end">
@@ -1088,8 +1295,13 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
    playerError = signal<string | null>(null);
    isPlaying = signal(false);
    isMuted = signal(false);
-   isFullscreen = signal(false);
+   domFullscreen = signal(false);
+   windowFullscreen = signal(false);
+   isFullscreen = computed(() => this.domFullscreen() || this.windowFullscreen());
+   pseudoFullscreen = computed(() => this.windowFullscreen() && !this.domFullscreen());
    isPiP = signal(false);
+   playerControlsVisible = signal(true);
+   private playerControlsHideTimer: any = null;
    private playerDuration = signal<number | null>(null);
 
    duration = computed(() => {
@@ -1132,6 +1344,121 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
 
    activeTab = signal<TabId>('notes');
    currentTime = signal(0);
+
+   subtitles = signal<SubtitlesFile | null>(null);
+   subtitlesLoading = signal(false);
+   subtitleTrackId = signal<string>('original');
+   ccEnabled = signal(false);
+   ccMenuOpen = signal(false);
+   ccSettingsOpen = signal(false);
+   ccStyle = signal({
+     fontSize: 18,
+     x: 0.5,
+     y: 0.85,
+     color: '#ffffff',
+     bgOpacity: 0.35,
+   });
+   translatingSubtitles = signal(false);
+
+   subtitleTracks = computed<SubtitleTrack[]>(() => {
+     const subs = this.subtitles();
+     return subs?.tracks || [];
+   });
+
+   private transcriptionAsTrack(m: MediaItem | null): SubtitleTrack | null {
+     if (!m?.transcription?.segments?.length) return null;
+     const segs: SubtitleSegment[] = m.transcription.segments
+       .filter(s => (s.text || '').trim())
+       .map(s => ({
+         id: s.id,
+         start: Number(s.start) || 0,
+         end: Number(s.end) || Number(s.start) || 0,
+         text: (s.text || '').toString(),
+       }));
+     return {
+       id: 'original',
+       label: 'Original',
+       language: m.transcription.language,
+       kind: 'transcription',
+       segments: segs,
+     };
+   }
+
+   availableSubtitleTracks = computed<SubtitleTrack[]>(() => {
+     const subs = this.subtitles();
+     if (subs?.tracks?.length) {
+       return subs.tracks.filter(t => (t.segments || []).length > 0);
+     }
+     const m = this.media();
+     const t = this.transcriptionAsTrack(m);
+     return t ? [t] : [];
+   });
+
+   selectedSubtitleTrack = computed<SubtitleTrack | null>(() => {
+     const id = (this.subtitleTrackId() || '').trim();
+     if (!id) return null;
+     const tracks = this.availableSubtitleTracks();
+     return tracks.find(t => t.id === id) || tracks[0] || null;
+   });
+
+   transcriptSegments = computed<Array<Pick<SubtitleSegment, 'id' | 'start' | 'end' | 'text'>>>(() => {
+     const t = this.selectedSubtitleTrack();
+     if (!t) {
+       const m = this.media();
+       return (m?.transcription?.segments || []).map(s => ({ id: s.id, start: s.start, end: s.end, text: s.text }));
+     }
+     return (t.segments || []).map(s => ({ id: s.id, start: s.start, end: s.end, text: s.text }));
+   });
+
+   activeSubtitleText = computed<string | null>(() => {
+      if (!this.ccEnabled()) return null;
+      const t = this.selectedSubtitleTrack();
+      if (!t) return null;
+     const segs = t.segments || [];
+     if (!segs.length) return null;
+     const cur = Number(this.currentTime()) || 0;
+
+     // Binary search by start time.
+     let lo = 0;
+     let hi = segs.length - 1;
+     let best = -1;
+     while (lo <= hi) {
+       const mid = (lo + hi) >> 1;
+       const s = Number(segs[mid].start) || 0;
+       if (s <= cur) {
+         best = mid;
+         lo = mid + 1;
+       } else {
+         hi = mid - 1;
+       }
+     }
+     if (best < 0) return null;
+     const seg = segs[best];
+     const end = Number(seg.end) || Number(seg.start) || 0;
+     if (cur < (Number(seg.start) || 0) || cur >= end) return null;
+      const text = (seg.text || '').toString().trim();
+      return text || null;
+   });
+
+   ccDisplayText = computed<string | null>(() => {
+     const live = this.activeSubtitleText();
+     if (live) return live;
+     if (this.ccSettingsOpen()) return '字幕预览\nDrag / Resize';
+     return null;
+   });
+
+   ccOverlayStyle = computed(() => {
+     const s: any = this.ccStyle();
+     const x = Number(s.x);
+     const y = Number(s.y);
+     return {
+       '--cc-font-size': `${Math.max(10, Math.min(72, Number(s.fontSize) || 18))}px`,
+       '--cc-x': `${Math.max(0.05, Math.min(0.95, isFinite(x) ? x : 0.5)) * 100}%`,
+       '--cc-y': `${Math.max(0.05, Math.min(0.95, isFinite(y) ? y : 0.85)) * 100}%`,
+       '--cc-color': (s.color || '#ffffff'),
+       '--cc-bg': `${Math.max(0, Math.min(0.9, Number(s.bgOpacity) || 0))}`,
+     } as any;
+   });
 
    moreMenuOpen = signal(false);
 
@@ -1176,6 +1503,7 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
    transcriptionJob = computed(() => this.latestJob('transcription'));
    optimizeJob = computed(() => this.latestJob('optimize'));
    summaryJob = computed(() => this.latestJob('summary'));
+   subtitleJob = computed(() => this.latestJob('subtitle'));
 
    activeJobBanner = computed<ProcessingJob | null>(() => {
       const m = this.media();
@@ -1200,6 +1528,11 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
       return !!j && (j.status === 'pending' || j.status === 'processing');
    });
 
+   subtitleRunning = computed(() => {
+     const j = this.subtitleJob();
+     return !!j && (j.status === 'pending' || j.status === 'processing');
+   });
+
    transcribing = signal(false);
    optimizing = signal(false);
    summarizing = signal(false);
@@ -1210,6 +1543,33 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
    activeChatId = signal<string | null>(null);
    chatEditingId = signal<string | null>(null);
    chatTitleDraft = signal('');
+
+   chatIncludeTranscription = signal(true);
+   chatIncludeSummary = signal(false);
+
+   chatCollapsed = signal<Record<string, boolean>>({});
+
+   isChatMsgCollapsed(id: string): boolean {
+     const v = this.chatCollapsed()[id];
+     // Default collapsed for long assistant outputs.
+     return v === undefined ? true : !!v;
+   }
+
+   toggleChatMsgCollapse(id: string, evt?: Event): void {
+     evt?.preventDefault();
+     evt?.stopPropagation();
+     const cur = this.chatCollapsed();
+     const next = { ...cur, [id]: !cur[id] };
+     this.chatCollapsed.set(next);
+   }
+
+   chatMsgPreview(content: string): string {
+     const s = (content || '').trim();
+     if (!s) return '';
+     const lines = s.split(/\r?\n/);
+     if (lines.length <= 10) return s;
+     return lines.slice(0, 10).join('\n') + '\n…';
+   }
 
    tagEditing = signal(false);
    tagDraft = signal('');
@@ -1337,8 +1697,11 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
       this.activeTab.set('chat');
     }
 
-   private playerSrcSeq = 0;
-   private lastPlayerKey: string | null = null;
+    private playerSrcSeq = 0;
+    private lastPlayerKey: string | null = null;
+
+    private subtitlesSeq = 0;
+    private lastSubtitlesMediaId: string | null = null;
 
     constructor() {
        // Make route params reactive even when the component instance is reused.
@@ -1358,6 +1721,7 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
        effect(() => {
           const m = this.media();
           void this.refreshPlayerSource(m);
+          void this.refreshSubtitles(m);
        });
 
        effect(() => {
@@ -1421,13 +1785,17 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
        void this.refreshFullscreenState();
     }
 
-   ngOnDestroy(): void {
-       this.endHold();
-       this.flushNoteAutosave();
-       if (this.noteAutosaveTimer) {
-         clearTimeout(this.noteAutosaveTimer);
-         this.noteAutosaveTimer = null;
-       }
+    ngOnDestroy(): void {
+        this.endHold();
+        this.flushNoteAutosave();
+        if (this.playerControlsHideTimer) {
+          clearTimeout(this.playerControlsHideTimer);
+          this.playerControlsHideTimer = null;
+        }
+        if (this.noteAutosaveTimer) {
+          clearTimeout(this.noteAutosaveTimer);
+          this.noteAutosaveTimer = null;
+        }
        if (this.noteResizeObserver) {
          this.noteResizeObserver.disconnect();
          this.noteResizeObserver = null;
@@ -1526,16 +1894,46 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
       this.playerLoading.set(false);
    }
 
+    private showPlayerControls(autoHide: boolean = true): void {
+      this.playerControlsVisible.set(true);
+      if (this.playerControlsHideTimer) {
+        clearTimeout(this.playerControlsHideTimer);
+        this.playerControlsHideTimer = null;
+      }
+      if (!autoHide) return;
+      if (!this.isPlaying()) return;
+
+      this.playerControlsHideTimer = setTimeout(() => {
+        // Hide only while playing.
+        if (this.isPlaying()) {
+          this.playerControlsVisible.set(false);
+        }
+      }, 1800);
+    }
+
+    onPlayerMouseMove(): void {
+      this.showPlayerControls(true);
+    }
+
+    onPlayerMouseLeave(): void {
+      if (this.isPlaying()) {
+        this.playerControlsVisible.set(false);
+      }
+    }
+
    onPlay(): void {
       this.isPlaying.set(true);
+      this.showPlayerControls(true);
    }
 
    onPause(): void {
       this.isPlaying.set(false);
+      this.showPlayerControls(false);
    }
 
    onEnded(): void {
       this.isPlaying.set(false);
+      this.showPlayerControls(false);
    }
 
     onPlayerStageClick(event: MouseEvent): void {
@@ -1552,6 +1950,8 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
     togglePlayback(event?: Event): void {
       event?.preventDefault();
       event?.stopPropagation();
+
+      this.showPlayerControls(true);
 
       const el = this.activeMediaEl();
       if (!el) return;
@@ -1610,6 +2010,42 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
       event?.preventDefault();
       event?.stopPropagation();
 
+      // If we're in Tauri window fullscreen (not DOM fullscreen), toggle it off.
+      if (!document.fullscreenElement && this.windowFullscreen()) {
+        await this.tauri.ready();
+        if (this.tauri.isTauri()) {
+          try {
+            const win = await import('@tauri-apps/api/window');
+            await win.getCurrentWindow().setFullscreen(false);
+            this.windowFullscreen.set(false);
+            this.domFullscreen.set(false);
+            return;
+          } catch (err) {
+            console.error('toggle fullscreen (tauri exit) failed', err);
+          }
+        }
+      }
+
+      // Prefer true DOM fullscreen on the player container.
+      try {
+         if (document.fullscreenElement) {
+            await document.exitFullscreen();
+            this.domFullscreen.set(false);
+            this.windowFullscreen.set(false);
+            return;
+         }
+         const target = (this.playerContainer()?.nativeElement || this.videoEl()?.nativeElement) as any;
+         if (target?.requestFullscreen) {
+            await target.requestFullscreen();
+            this.domFullscreen.set(true);
+            this.windowFullscreen.set(false);
+            return;
+         }
+      } catch (err) {
+         console.error('toggle fullscreen failed', err);
+      }
+
+      // Fallback: Tauri window fullscreen if DOM fullscreen is not available.
       await this.tauri.ready();
       if (this.tauri.isTauri()) {
          try {
@@ -1617,41 +2053,31 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
             const w = win.getCurrentWindow();
             const fs = await w.isFullscreen();
             await w.setFullscreen(!fs);
-            this.isFullscreen.set(!fs);
-            return;
+            this.windowFullscreen.set(!fs);
+            this.domFullscreen.set(false);
          } catch (err) {
             console.error('toggle fullscreen (tauri) failed', err);
          }
-      }
-
-      // Web fallback.
-      try {
-         if (document.fullscreenElement) {
-            await document.exitFullscreen();
-            this.isFullscreen.set(false);
-         } else {
-            const target = (this.playerContainer()?.nativeElement || this.videoEl()?.nativeElement || document.documentElement) as any;
-            if (target?.requestFullscreen) {
-               await target.requestFullscreen();
-            }
-         }
-      } catch (err) {
-         console.error('toggle fullscreen failed', err);
       }
    }
 
    @HostListener('document:fullscreenchange')
    onFullscreenChange(): void {
-      this.isFullscreen.set(!!document.fullscreenElement);
+      const dom = !!document.fullscreenElement;
+      this.domFullscreen.set(dom);
+      if (dom) {
+        this.windowFullscreen.set(false);
+      }
    }
 
-   @HostListener('document:click')
-   onDocumentClick(): void {
-      if (this.moreMenuOpen()) this.moreMenuOpen.set(false);
-   }
+    @HostListener('document:click')
+    onDocumentClick(): void {
+       if (this.moreMenuOpen()) this.moreMenuOpen.set(false);
+       if (this.ccMenuOpen()) this.ccMenuOpen.set(false);
+    }
 
    @HostListener('document:keydown.escape')
-   onDocumentEsc(): void {
+    onDocumentEsc(): void {
       if (this.noteEditorOpen()) {
         this.closeNoteEditor();
         return;
@@ -1660,8 +2086,9 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
         this.closeDockedNoteEditor();
         return;
       }
-      if (this.moreMenuOpen()) this.moreMenuOpen.set(false);
-   }
+       if (this.moreMenuOpen()) this.moreMenuOpen.set(false);
+       if (this.ccMenuOpen()) this.ccMenuOpen.set(false);
+    }
 
     private holdTimer: any = null;
     private scrubTimer: any = null;
@@ -1816,7 +2243,7 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
       try {
          const win = await import('@tauri-apps/api/window');
          const fs = await win.getCurrentWindow().isFullscreen();
-         this.isFullscreen.set(fs);
+         this.windowFullscreen.set(fs);
       } catch {
          // ignore
       }
@@ -1855,7 +2282,7 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
       return /^[a-zA-Z]:[\\/]/.test(s);
    }
 
-   private async refreshPlayerSource(m: MediaItem | null): Promise<void> {
+    private async refreshPlayerSource(m: MediaItem | null): Promise<void> {
       // Only rebuild the player when the playable source changes.
       const key = m ? `${m.type}|${this.playableFilePath(m) || ''}` : null;
       if (key && key === this.lastPlayerKey && this.playerSrc()) {
@@ -1885,11 +2312,37 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
       }
 
       try {
+         const root = await this.tauri.getDataRoot();
          let absPath = path;
+         const p = await import('@tauri-apps/api/path');
+
          if (!this.isAbsolutePath(path)) {
-            const root = await this.tauri.getDataRoot();
-            const p = await import('@tauri-apps/api/path');
             absPath = await p.join(root, path);
+         } else {
+            // If the file is outside allowed asset scope, stage it into data_root/media/<id>/.
+            const normRoot = (root || '').replace(/\\/g, '/').toLowerCase();
+            const normAbs = absPath.replace(/\\/g, '/').toLowerCase();
+            if (!normAbs.startsWith(normRoot)) {
+               try {
+                  const res = await this.backend.stageExternalFile(m.id, absPath);
+                  const rel = (res.stored_rel || '').trim();
+                  if (rel) {
+                     // Update persisted media source path to the staged relative path.
+                     const nextSource: any = { ...(m as any).source };
+                     if (nextSource.type === 'local') {
+                        nextSource.path = rel;
+                        if (typeof res.file_size === 'number') nextSource.fileSize = res.file_size;
+                     } else if (nextSource.type === 'online') {
+                        nextSource.cachedPath = rel;
+                        if (typeof res.file_size === 'number') nextSource.fileSize = res.file_size;
+                     }
+                     this.state.updateMediaItem(m.id, { source: nextSource });
+                     absPath = await p.join(root, rel);
+                  }
+               } catch (e) {
+                  console.error('stageExternalFile failed', e);
+               }
+            }
          }
 
          const url = await this.tauri.convertFileSrc(absPath);
@@ -1939,6 +2392,202 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
 
       if (created) {
         this.openNoteEditor(created.id);
+      }
+    }
+
+    private async refreshSubtitles(m: MediaItem | null): Promise<void> {
+      const seq = ++this.subtitlesSeq;
+
+      if (!m) {
+        this.subtitles.set(null);
+        this.lastSubtitlesMediaId = null;
+        return;
+      }
+
+      if (this.lastSubtitlesMediaId === m.id && this.subtitles()) {
+        return;
+      }
+
+      this.lastSubtitlesMediaId = m.id;
+      this.subtitlesLoading.set(true);
+      try {
+        await this.tauri.ready();
+        if (seq !== this.subtitlesSeq) return;
+        if (!this.tauri.isTauri()) {
+          this.subtitles.set(null);
+          return;
+        }
+
+        let subs = await this.backend.loadSubtitles(m.id);
+        if (!subs && m.transcription) {
+          subs = await this.backend.ensureSubtitles(m.id);
+        }
+        if (seq !== this.subtitlesSeq) return;
+        this.subtitles.set(subs);
+
+        // Normalize selection.
+        const tracks = this.availableSubtitleTracks();
+        const wanted = this.subtitleTrackId();
+        if (tracks.length && !tracks.some(t => t.id === wanted)) {
+          this.subtitleTrackId.set(tracks[0].id);
+        }
+      } catch {
+        if (seq !== this.subtitlesSeq) return;
+        this.subtitles.set(null);
+      } finally {
+        if (seq === this.subtitlesSeq) {
+          this.subtitlesLoading.set(false);
+        }
+      }
+    }
+
+    toggleCcMenu(event: MouseEvent): void {
+      event.preventDefault();
+      event.stopPropagation();
+      this.ccMenuOpen.update(v => !v);
+    }
+
+    setCcTrack(trackId: string | null, event?: MouseEvent): void {
+      event?.preventDefault();
+      event?.stopPropagation();
+
+      if (!trackId || trackId === 'off') {
+        this.ccEnabled.set(false);
+        this.ccMenuOpen.set(false);
+        return;
+      }
+
+      this.subtitleTrackId.set(trackId);
+      this.ccEnabled.set(true);
+      this.ccMenuOpen.set(false);
+    }
+
+    resetCcStyle(): void {
+      this.ccStyle.set({
+        fontSize: 18,
+        x: 0.5,
+        y: 0.85,
+        color: '#ffffff',
+        bgOpacity: 0.35,
+      });
+    }
+
+    private ccDragActive = false;
+    private ccResizeActive = false;
+    private ccStartClientX = 0;
+    private ccStartClientY = 0;
+    private ccStartX = 0.5;
+    private ccStartY = 0.85;
+    private ccStartFontSize = 18;
+
+    private playerRect(): DOMRect | null {
+      const el = this.playerContainer()?.nativeElement;
+      if (!el) return null;
+      try {
+        return el.getBoundingClientRect();
+      } catch {
+        return null;
+      }
+    }
+
+    ccDragStart(evt: MouseEvent): void {
+      if (!this.ccSettingsOpen()) return;
+      if (evt.button !== 0) return;
+      evt.preventDefault();
+      evt.stopPropagation();
+
+      const s: any = this.ccStyle();
+      this.ccDragActive = true;
+      this.ccResizeActive = false;
+      this.ccStartClientX = evt.clientX;
+      this.ccStartClientY = evt.clientY;
+      this.ccStartX = Number(s.x) || 0.5;
+      this.ccStartY = Number(s.y) || 0.85;
+    }
+
+    ccResizeStart(evt: MouseEvent): void {
+      if (!this.ccSettingsOpen()) return;
+      if (evt.button !== 0) return;
+      evt.preventDefault();
+      evt.stopPropagation();
+
+      const s: any = this.ccStyle();
+      this.ccResizeActive = true;
+      this.ccDragActive = false;
+      this.ccStartClientX = evt.clientX;
+      this.ccStartClientY = evt.clientY;
+      this.ccStartFontSize = Number(s.fontSize) || 18;
+    }
+
+    @HostListener('document:mousemove', ['$event'])
+    onCcDragMove(evt: MouseEvent): void {
+      if (!this.ccSettingsOpen()) {
+        this.ccDragActive = false;
+        this.ccResizeActive = false;
+        return;
+      }
+
+      const rect = this.playerRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+
+      if (this.ccDragActive) {
+        const dx = evt.clientX - this.ccStartClientX;
+        const dy = evt.clientY - this.ccStartClientY;
+        const nextX = this.ccStartX + dx / rect.width;
+        const nextY = this.ccStartY + dy / rect.height;
+        this.ccStyle.set({
+          ...this.ccStyle(),
+          x: Math.max(0.05, Math.min(0.95, nextX)),
+          y: Math.max(0.05, Math.min(0.95, nextY)),
+        } as any);
+        return;
+      }
+
+      if (this.ccResizeActive) {
+        const dx = evt.clientX - this.ccStartClientX;
+        const dy = evt.clientY - this.ccStartClientY;
+        const delta = (dx - dy) / 12;
+        const next = Math.round(this.ccStartFontSize + delta);
+        this.ccStyle.set({
+          ...this.ccStyle(),
+          fontSize: Math.max(12, Math.min(72, next)),
+        } as any);
+      }
+    }
+
+    @HostListener('document:mouseup')
+    onCcDragEnd(): void {
+      this.ccDragActive = false;
+      this.ccResizeActive = false;
+    }
+
+    async translateSubtitlesToZh(): Promise<void> {
+      const m = this.media();
+      if (!m) return;
+
+      await this.tauri.ready();
+      if (!this.tauri.isTauri()) {
+        this.toast.warning('Web 预览模式暂不支持字幕翻译');
+        return;
+      }
+      if (!m.transcription) {
+        this.toast.warning('请先生成转写');
+        return;
+      }
+      if (this.translatingSubtitles()) return;
+
+      this.translatingSubtitles.set(true);
+      try {
+        const res = await this.backend.translateSubtitles(m.id, this.state.settings().ai, 'zh');
+        this.subtitles.set(res);
+        this.subtitleTrackId.set('zh');
+        this.ccEnabled.set(true);
+        this.toast.success('已生成中文字幕');
+      } catch (err: any) {
+        console.error('translateSubtitles failed', err);
+        this.toast.error(this.formatError(err) || '字幕翻译失败');
+      } finally {
+        this.translatingSubtitles.set(false);
       }
     }
 
@@ -2305,7 +2954,19 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
             return;
          }
 
-         const res = await this.backend.exportMedia(m.id);
+         let exportBase: string | undefined = undefined;
+         try {
+           const dialog = await import('@tauri-apps/plugin-dialog');
+           const picked = await dialog.open({ directory: true, multiple: false, title: '选择导出目录' } as any);
+           if (!picked) {
+             return;
+           }
+           exportBase = Array.isArray(picked) ? (picked[0] as any) : (picked as any);
+         } catch {
+           // dialog not available; fallback to default export location
+         }
+
+         const res = await this.backend.exportMedia(m.id, exportBase);
          this.toast.success(`已导出到：${res.export_dir}`);
       } catch (err: any) {
          console.error('exportMedia failed', err);
@@ -2313,7 +2974,34 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
       } finally {
          this.exporting.set(false);
       }
-    }
+     }
+
+    async openStorageLocation(): Promise<void> {
+       const m = this.media();
+       if (!m) return;
+
+       try {
+         await this.tauri.ready();
+         if (!this.tauri.isTauri()) {
+           this.toast.warning('Web 预览模式暂不支持打开存储位置');
+           return;
+         }
+
+         await this.backend.revealMediaDir(m.id);
+       } catch (err: any) {
+         console.error('openStorageLocation failed', err);
+         const msg = this.formatError(err) || '打开存储位置失败';
+         this.toast.error(msg);
+         try {
+           const info = await this.backend.getMediaStorageInfo(m.id);
+           if (info?.media_dir) {
+             this.toast.info(`存储目录：${info.media_dir}`);
+           }
+         } catch {
+           // ignore
+         }
+       }
+     }
 
     openTranscriptionDialog(): void {
       const t = this.state.settings().transcription;
@@ -2325,6 +3013,27 @@ export class MediaDetailComponent implements OnInit, OnDestroy {
       });
       this.transcriptionDialogOpen.set(true);
     }
+
+     async openExternalUrl(url: string, evt?: Event): Promise<void> {
+       evt?.preventDefault();
+       evt?.stopPropagation();
+       const u = (url || '').trim();
+       if (!u) return;
+
+       await this.tauri.ready();
+       if (!this.tauri.isTauri()) {
+         window.open(u, '_blank', 'noopener,noreferrer');
+         return;
+       }
+
+       // Desktop: try shell plugin, fallback to window.open
+       try {
+         const shell = await import('@tauri-apps/plugin-shell');
+         await shell.open(u as any);
+       } catch {
+         window.open(u, '_blank', 'noopener,noreferrer');
+       }
+     }
 
     formatDateTime(iso: string | undefined | null): string {
       if (!iso) return '';
@@ -2582,7 +3291,11 @@ Input (transcript):\n\n{{input}}\n`;
       try {
          const updated = this.state.mediaItems().find(x => x.id === m.id)?.aiChats.find(c => c.id === chat!.id) || chat;
          const payload = (updated?.messages || []).slice(-12).map(msg => ({ role: msg.role, content: msg.content }));
-         const res = await this.backend.chatMedia(m.id, this.state.settings().ai, payload);
+          const res = await this.backend.chatMedia(m.id, this.state.settings().ai, payload, {
+            includeTranscription: this.chatIncludeTranscription(),
+            includeSummary: this.chatIncludeSummary(),
+            userLang: this.config.lang(),
+          });
          this.state.addMessageToConversation(m.id, chat.id, {
             role: res.message.role,
             content: res.message.content,

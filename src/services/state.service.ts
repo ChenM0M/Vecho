@@ -25,10 +25,60 @@ import type { BackendJobProgressEvent } from './backend.service';
 import type { PersistedAppState } from '../types';
 
 function createDefaultSettings(): AppSettings {
+    const detectLang = (): 'en' | 'zh' => {
+        try {
+            const l = (typeof navigator !== 'undefined' ? (navigator.language || '') : '').toLowerCase();
+            return l.startsWith('zh') ? 'zh' : 'en';
+        } catch {
+            return 'zh';
+        }
+    };
+    const language = detectLang();
+
+    const defaultSummaryTemplate = language === 'zh'
+        ? (
+            '你正在为一个媒体转写内容生成【最终总结】。\n\n'
+            + '只返回 JSON（不要代码块）。\n'
+            + 'Schema:\n'
+            + '{\n'
+            + '  "content": string (markdown),\n'
+            + '  "keyPoints": string[] (optional),\n'
+            + '  "chapters": [{"timestamp": number, "title": string, "summary": string?}] (optional)\n'
+            + '}\n\n'
+            + '规则：\n'
+            + '- "content" 必须是 markdown。\n'
+            + '- 引用事实时请带上时间戳 [MM:SS]。\n'
+            + '- 在 markdown 中包含两个 mermaid 图（用 fenced code block）：\n'
+            + '  1) 时间线（叙事驱动）flowchart LR（不要 gantt）\n'
+            + '  2) 逻辑思维导图 mindmap\n'
+            + '- mermaid 语法尽量简单稳健，节点 ID 避免奇怪字符，把可读文字放 label。\n\n'
+            + '输入（{{inputType}}）：\n\n'
+            + '{{input}}\n'
+        )
+        : (
+            'You are creating the FINAL summary for a media transcript.\n\n'
+            + 'Return ONLY JSON (no code fences).\n'
+            + 'Schema:\n'
+            + '{\n'
+            + '  "content": string (markdown),\n'
+            + '  "keyPoints": string[] (optional),\n'
+            + '  "chapters": [{"timestamp": number, "title": string, "summary": string?}] (optional)\n'
+            + '}\n\n'
+            + 'Rules:\n'
+            + '- Your "content" MUST be markdown.\n'
+            + '- When referencing facts, include timestamps like [MM:SS].\n'
+            + '- Include TWO mermaid diagrams inside the markdown as fenced code blocks:\n'
+            + '  1) Narrative Timeline (time-driven) as a flowchart (NOT gantt). Start with: flowchart LR\n'
+            + '  2) Logic Mind Map (logic-driven). Start with: mindmap\n'
+            + '- Keep mermaid syntax simple and robust. Avoid exotic characters in node IDs; put human text in labels.\n\n'
+            + 'Input ({{inputType}}):\n\n'
+            + '{{input}}\n'
+        );
+
     return {
         appearance: {
             theme: 'light',
-            language: 'zh',
+            language,
             sidebarCollapsed: false
         },
         workspace: {
@@ -61,29 +111,12 @@ function createDefaultSettings(): AppSettings {
                 model: 'gemini-1.5-flash'
             },
              summaryPrompts: [
-                 {
-                     id: 'sum-default',
-                     name: '默认（时间轴 + 脑图）',
-                     template:
-                        'You are creating the FINAL summary for a media transcript.\n\n'
-                        + 'Return ONLY JSON (no code fences).\n'
-                        + 'Schema:\n'
-                        + '{\n'
-                        + '  "content": string (markdown),\n'
-                        + '  "keyPoints": string[] (optional),\n'
-                        + '  "chapters": [{"timestamp": number, "title": string, "summary": string?}] (optional)\n'
-                        + '}\n\n'
-                        + 'Rules:\n'
-                        + '- Your "content" MUST be markdown.\n'
-                         + '- When referencing facts, include timestamps like [MM:SS].\n'
-                         + '- Include TWO mermaid diagrams inside the markdown as fenced code blocks:\n'
-                         + '  1) Narrative Timeline (time-driven) as a flowchart (NOT gantt). Start with: flowchart LR\n'
-                         + '  2) Logic Mind Map (logic-driven). Start with: mindmap\n'
-                         + '- Keep mermaid syntax simple and robust. Avoid exotic characters in node IDs; put human text in labels.\n\n'
-                         + 'Input ({{inputType}}):\n\n'
-                         + '{{input}}\n'
-                 }
-             ],
+                  {
+                      id: 'sum-default',
+                      name: '默认（时间轴 + 脑图）',
+                      template: defaultSummaryTemplate
+                  }
+              ],
             defaultSummaryPromptId: 'sum-default'
         },
         plugins: {
@@ -327,7 +360,9 @@ export class StateService {
                     ? 'summary'
                     : event.job_type === 'export'
                         ? 'export'
-                    : 'transcription';
+                        : event.job_type === 'subtitle'
+                            ? 'subtitle'
+                            : 'transcription';
 
         const status: ProcessingJob['status'] = event.status === 'queued'
             ? 'pending'

@@ -67,15 +67,27 @@ import { ProcessingJob, MediaItem } from '../types';
                 <!-- Input Link Option -->
                 <div class="w-full max-w-md relative z-10" (click)="$event.stopPropagation()">
                    <div class="flex items-center gap-2 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-md px-3 py-2.5 shadow-sm focus-within:ring-2 focus-within:ring-zinc-200 dark:focus-within:ring-zinc-800 transition-all">
-                       <app-icon name="link" [size]="14" class="text-zinc-400"></app-icon>
-                       <input [(ngModel)]="importUrlValue" (ngModelChange)="importUrl.set($event)" (keydown.enter)="importFromUrl()" 
-                              type="text" [placeholder]="config.t().home.inbox.linkPlaceholder" 
-                              class="bg-transparent border-none outline-none text-xs flex-1 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400">
-                        <button *ngIf="importUrl().trim()" (click)="importFromUrl()" class="text-[10px] font-bold bg-zinc-900 dark:bg-zinc-100 text-white dark:text-black px-2 py-0.5 rounded-sm">
-                            {{ config.t().common.import }}
-                        </button>
-                   </div>
-                </div>
+                        <app-icon name="link" [size]="14" class="text-zinc-400"></app-icon>
+                        <input [(ngModel)]="importUrlValue" (ngModelChange)="importUrl.set($event)" (keydown.enter)="importFromUrl()" 
+                               type="text" [placeholder]="config.t().home.inbox.linkPlaceholder" 
+                               class="bg-transparent border-none outline-none text-xs flex-1 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400">
+                        <select
+                          [(ngModel)]="importQualityValue"
+                          (ngModelChange)="importQuality.set($event)"
+                          class="h-6 px-1.5 rounded-sm border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-[10px] font-bold text-zinc-600 dark:text-zinc-300"
+                          title="下载画质"
+                        >
+                          <option value="best">Best</option>
+                          <option value="1080p">1080p</option>
+                          <option value="720p">720p</option>
+                          <option value="480p">480p</option>
+                          <option value="360p">360p</option>
+                        </select>
+                         <button *ngIf="importUrl().trim()" (click)="importFromUrl()" class="text-[10px] font-bold bg-zinc-900 dark:bg-zinc-100 text-white dark:text-black px-2 py-0.5 rounded-sm">
+                             {{ config.t().common.import }}
+                         </button>
+                    </div>
+                 </div>
              </div>
 
              <!-- Recent Media Grid -->
@@ -223,6 +235,8 @@ export class HomeComponent {
   isDragging = signal(false);
   importUrl = signal('');
   importUrlValue = '';
+  importQuality = signal('best');
+  importQualityValue = 'best';
 
   rightPanel = signal<'queue' | 'activity'>('queue');
 
@@ -321,7 +335,7 @@ export class HomeComponent {
     // Desktop (Tauri): let the backend drive job progress.
     if (await this.backend.isAvailable()) {
       try {
-        const res = await this.backend.importUrl(url, item.id);
+        const res = await this.backend.importUrl(url, item.id, this.importQuality());
         if (res.warning) {
           console.warn('import_url warning', res.warning);
         }
@@ -376,6 +390,13 @@ export class HomeComponent {
 
         if (shouldDiscard) {
           // Tooling/config errors: don't pollute the library.
+          try {
+            if (await this.backend.isAvailable()) {
+              await this.backend.deleteMediaStorage(item.id);
+            }
+          } catch {
+            // ignore
+          }
           this.state.discardMediaItem(item.id);
         } else {
           // Keep failed downloads for retry.

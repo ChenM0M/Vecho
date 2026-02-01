@@ -61,3 +61,38 @@ commands.allow = ["chat_media"]
 identifier = "allow-export-media"
 description = "Enables the export_media command."
 commands.allow = ["export_media"]
+
+[[permission]]
+identifier = "allow-delete-media-storage"
+description = "Enables the delete_media_storage command."
+commands.allow = ["delete_media_storage"]
+
+[[permission]]
+identifier = "allow-get-media-storage-info"
+description = "Enables the get_media_storage_info command."
+commands.allow = ["get_media_storage_info"]
+
+[[permission]]
+identifier = "allow-reveal-media-dir"
+description = "Enables the reveal_media_dir command."
+commands.allow = ["reveal_media_dir"]
+
+[[permission]]
+identifier = "allow-stage-external-file"
+description = "Enables the stage_external_file command."
+commands.allow = ["stage_external_file"]
+
+[[permission]]
+identifier = "allow-load-subtitles"
+description = "Enables the load_subtitles command."
+commands.allow = ["load_subtitles"]
+
+[[permission]]
+identifier = "allow-ensure-subtitles"
+description = "Enables the ensure_subtitles command."
+commands.allow = ["ensure_subtitles"]
+
+[[permission]]
+identifier = "allow-translate-subtitles"
+description = "Enables the translate_subtitles command."
+commands.allow = ["translate_subtitles"]

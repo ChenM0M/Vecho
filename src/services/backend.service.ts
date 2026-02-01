@@ -18,6 +18,43 @@ export interface ImportUrlResult {
   warning?: string | null;
 }
 
+export interface MediaStorageInfoResult {
+  media_id: string;
+  data_root: string;
+  media_dir: string;
+  files: string[];
+}
+
+export interface StageExternalFileResult {
+  media_id: string;
+  stored_path: string;
+  stored_rel?: string;
+  file_size?: number;
+}
+
+export interface SubtitleSegment {
+  id: string;
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface SubtitleTrack {
+  id: string;
+  label?: string;
+  language?: string;
+  kind?: string;
+  generatedAt?: string;
+  segments: SubtitleSegment[];
+}
+
+export interface SubtitlesFile {
+  version: number;
+  mediaId: string;
+  generatedAt?: string;
+  tracks: SubtitleTrack[];
+}
+
 export interface UploadBeginResult {
   upload_id: string;
   media_id: string;
@@ -38,7 +75,7 @@ export interface UploadFinishResult {
   warning?: string | null;
 }
 
-export type BackendJobType = 'import' | 'download' | 'transcribe' | 'optimize' | 'summary' | 'export';
+export type BackendJobType = 'import' | 'download' | 'transcribe' | 'optimize' | 'summary' | 'export' | 'subtitle';
 export type BackendJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 export interface BackendJobProgressEvent {
@@ -103,11 +140,39 @@ export class BackendService {
     await this.tauri.invoke<void>('save_state', { args: { state } });
   }
 
-  async importUrl(url: string, mediaId?: string): Promise<ImportUrlResult> {
+  async importUrl(url: string, mediaId?: string, quality?: string): Promise<ImportUrlResult> {
     if (!(await this.isAvailable())) {
       throw new Error('backend not available');
     }
-    return this.tauri.invoke<ImportUrlResult>('import_url', { args: { url, mediaId } });
+    return this.tauri.invoke<ImportUrlResult>('import_url', { args: { url, mediaId, quality } });
+  }
+
+  async getMediaStorageInfo(mediaId: string): Promise<MediaStorageInfoResult> {
+    if (!(await this.isAvailable())) {
+      throw new Error('backend not available');
+    }
+    return this.tauri.invoke<MediaStorageInfoResult>('get_media_storage_info', { args: { mediaId } });
+  }
+
+  async revealMediaDir(mediaId: string): Promise<void> {
+    if (!(await this.isAvailable())) {
+      throw new Error('backend not available');
+    }
+    await this.tauri.invoke<void>('reveal_media_dir', { args: { mediaId } });
+  }
+
+  async deleteMediaStorage(mediaId: string): Promise<void> {
+    if (!(await this.isAvailable())) {
+      throw new Error('backend not available');
+    }
+    await this.tauri.invoke<void>('delete_media_storage', { args: { mediaId } });
+  }
+
+  async stageExternalFile(mediaId: string, absPath: string): Promise<StageExternalFileResult> {
+    if (!(await this.isAvailable())) {
+      throw new Error('backend not available');
+    }
+    return this.tauri.invoke<StageExternalFileResult>('stage_external_file', { args: { mediaId, absPath } });
   }
 
   async uploadBegin(args: { mediaId?: string; name: string; size: number; mime?: string | null }): Promise<UploadBeginResult> {
@@ -177,17 +242,52 @@ export class BackendService {
     });
   }
 
-  async chatMedia(mediaId: string, ai: AppSettings['ai'], messages: Array<Pick<AIMessage, 'role' | 'content'>>): Promise<ChatMediaResult> {
+  async chatMedia(
+    mediaId: string,
+    ai: AppSettings['ai'],
+    messages: Array<Pick<AIMessage, 'role' | 'content'>>,
+    options?: { includeTranscription?: boolean; includeSummary?: boolean; userLang?: 'en' | 'zh' }
+  ): Promise<ChatMediaResult> {
     if (!(await this.isAvailable())) {
       throw new Error('backend not available');
     }
-    return this.tauri.invoke<ChatMediaResult>('chat_media', { args: { mediaId, ai, messages } });
+    return this.tauri.invoke<ChatMediaResult>('chat_media', {
+      args: {
+        mediaId,
+        ai,
+        messages,
+        includeTranscription: options?.includeTranscription ?? true,
+        includeSummary: options?.includeSummary ?? false,
+        userLang: options?.userLang,
+      }
+    });
   }
 
-  async exportMedia(mediaId: string): Promise<ExportMediaResult> {
+  async exportMedia(mediaId: string, exportDir?: string): Promise<ExportMediaResult> {
     if (!(await this.isAvailable())) {
       throw new Error('backend not available');
     }
-    return this.tauri.invoke<ExportMediaResult>('export_media', { args: { mediaId } });
+    return this.tauri.invoke<ExportMediaResult>('export_media', { args: { mediaId, exportDir } });
+  }
+
+  async loadSubtitles(mediaId: string): Promise<SubtitlesFile | null> {
+    if (!(await this.isAvailable())) {
+      throw new Error('backend not available');
+    }
+    return this.tauri.invoke<SubtitlesFile | null>('load_subtitles', { args: { mediaId } });
+  }
+
+  async ensureSubtitles(mediaId: string): Promise<SubtitlesFile> {
+    if (!(await this.isAvailable())) {
+      throw new Error('backend not available');
+    }
+    return this.tauri.invoke<SubtitlesFile>('ensure_subtitles', { args: { mediaId } });
+  }
+
+  async translateSubtitles(mediaId: string, ai: AppSettings['ai'], targetLang: string): Promise<SubtitlesFile> {
+    if (!(await this.isAvailable())) {
+      throw new Error('backend not available');
+    }
+    return this.tauri.invoke<SubtitlesFile>('translate_subtitles', { args: { mediaId, ai, targetLang } });
   }
 }

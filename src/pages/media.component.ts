@@ -6,6 +6,8 @@ import { IconComponent } from '../components/icons';
 import { ConfigService } from '../services/config.service';
 import { StateService } from '../services/state.service';
 import { ConfirmService } from '../services/confirm.service';
+import { BackendService } from '../services/backend.service';
+import { ToastService } from '../services/toast.service';
 import type { Collection, MediaItem, ProcessingJob, ViewMode } from '../types';
 
 @Component({
@@ -286,15 +288,16 @@ import type { Collection, MediaItem, ProcessingJob, ViewMode } from '../types';
           <div class="fixed z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-sm shadow-lg py-1 min-w-[160px]"
             [style.top.px]="contextMenu.y" [style.left.px]="contextMenu.x">
 
-            @if (contextMenu.type === 'media') {
-              <button (click)="menuAction('play')" class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300">播放</button>
-              <button (click)="menuAction('rename')" class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300">重命名</button>
-              <div class="h-px bg-zinc-100 dark:bg-zinc-800 my-1"></div>
-              @if (currentCollectionId()) {
-                <button (click)="menuAction('removeFromCollection')" class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-red-600">移出收藏夹</button>
-              }
-              <button (click)="menuAction('delete')" class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-red-600">删除</button>
-            }
+             @if (contextMenu.type === 'media') {
+               <button (click)="menuAction('play')" class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300">播放</button>
+               <button (click)="menuAction('rename')" class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300">重命名</button>
+               <button (click)="menuAction('openLocation')" class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300">打开存储位置</button>
+               <div class="h-px bg-zinc-100 dark:bg-zinc-800 my-1"></div>
+               @if (currentCollectionId()) {
+                 <button (click)="menuAction('removeFromCollection')" class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-red-600">移出收藏夹</button>
+               }
+               <button (click)="menuAction('delete')" class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-red-600">删除</button>
+             }
 
             @if (contextMenu.type === 'collection') {
               <button (click)="startEditCollection(contextMenu.data.id, contextMenu.data.name)" class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300">重命名</button>
@@ -321,6 +324,8 @@ export class MediaComponent {
   config = inject(ConfigService);
   state = inject(StateService);
   confirm = inject(ConfirmService);
+  backend = inject(BackendService);
+  toast = inject(ToastService);
   router = inject(Router);
   route = inject(ActivatedRoute);
 
@@ -627,6 +632,18 @@ export class MediaComponent {
     switch (action) {
       case 'play':
         this.router.navigate(['/media', data.id]);
+        break;
+      case 'openLocation':
+        if (!(await this.backend.isAvailable())) {
+          this.toast.warning('暂不支持打开存储位置（仅桌面端）');
+          break;
+        }
+        try {
+          await this.backend.revealMediaDir(data.id);
+        } catch (e) {
+          console.error('revealMediaDir failed', e);
+          this.toast.error('打开存储位置失败');
+        }
         break;
       case 'delete':
         if (await this.confirm.confirm({

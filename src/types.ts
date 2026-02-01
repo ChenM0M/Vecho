@@ -340,7 +340,7 @@ export interface AppSettings {
 export interface ProcessingJob {
     id: string;
     mediaId: string;
-    type: 'import' | 'transcription' | 'optimize' | 'summary' | 'download' | 'export';
+    type: 'import' | 'transcription' | 'optimize' | 'summary' | 'download' | 'export' | 'subtitle';
     status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
     progress: number;        // 0-100
     message?: string;

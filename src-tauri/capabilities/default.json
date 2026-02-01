@@ -10,8 +10,20 @@
     "core:window:allow-maximize",
     "core:window:allow-unmaximize",
     "core:window:allow-start-dragging",
+    "core:window:allow-set-fullscreen",
+
+    "dialog:allow-open",
+
+    "shell:allow-open",
 
     "allow-get-data-root",
+    "allow-get-media-storage-info",
+    "allow-reveal-media-dir",
+    "allow-delete-media-storage",
+    "allow-stage-external-file",
+    "allow-load-subtitles",
+    "allow-ensure-subtitles",
+    "allow-translate-subtitles",
     "allow-load-state",
     "allow-save-state",
     "allow-import-url",

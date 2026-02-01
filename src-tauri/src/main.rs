@@ -139,6 +139,8 @@ async fn save_state(app: tauri::AppHandle, state: State<'_, Arc<AppState>>, args
 struct ImportUrlArgs {
   url: String,
   media_id: Option<String>,
+  #[serde(default)]
+  quality: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -185,9 +187,726 @@ async fn get_data_root(app: tauri::AppHandle, state: State<'_, Arc<AppState>>) -
   Ok(dir.to_string_lossy().to_string())
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaDirArgs {
+  media_id: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StageExternalFileArgs {
+  media_id: String,
+  abs_path: String,
+}
+
+#[tauri::command]
+async fn stage_external_file(
+  app: tauri::AppHandle,
+  args: StageExternalFileArgs,
+  state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+  let dir = state
+    .data_root
+    .get_or_try_init(|| async { portable::resolve_data_root(&app) })
+    .await?;
+
+  let media_id = args.media_id.trim().to_string();
+  validate_media_id(&media_id)?;
+
+  let src = std::path::PathBuf::from(args.abs_path.trim());
+  if !src.is_file() {
+    return Err("source file not found".to_string());
+  }
+
+  let media_dir = dir.join("media").join(&media_id);
+  tokio::fs::create_dir_all(&media_dir)
+    .await
+    .map_err(|e| format!("create media dir failed: {e}"))?;
+
+  // Remove previous source.* if any
+  if let Ok(p) = find_source_file(&media_dir) {
+    let _ = tokio::fs::remove_file(&p).await;
+  }
+
+  let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("");
+  let final_name = if ext.trim().is_empty() {
+    "source".to_string()
+  } else {
+    format!("source.{ext}")
+  };
+  let dst = media_dir.join(&final_name);
+
+  tokio::fs::copy(&src, &dst)
+    .await
+    .map_err(|e| format!("copy file failed: {e}"))?;
+
+  let stored_rel = dst
+    .strip_prefix(&dir)
+    .ok()
+    .map(|p| p.to_string_lossy().replace('\\', "/"));
+
+  let file_size = std::fs::metadata(&dst).map(|m| m.len()).unwrap_or(0);
+
+  Ok(serde_json::json!({
+    "media_id": media_id,
+    "stored_path": dst.to_string_lossy().to_string(),
+    "stored_rel": stored_rel,
+    "file_size": file_size,
+  }))
+}
+
+#[tauri::command]
+async fn delete_media_storage(
+  app: tauri::AppHandle,
+  args: MediaDirArgs,
+  state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+  let dir = state
+    .data_root
+    .get_or_try_init(|| async { portable::resolve_data_root(&app) })
+    .await?;
+
+  let media_id = args.media_id.trim().to_string();
+  validate_media_id(&media_id)?;
+
+  let media_dir = dir.join("media").join(&media_id);
+  if !media_dir.exists() {
+    return Ok(());
+  }
+
+  tokio::fs::remove_dir_all(&media_dir)
+    .await
+    .map_err(|e| format!("delete media dir failed: {e}"))?;
+  Ok(())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TranslateSubtitlesArgs {
+  media_id: String,
+  ai: AiSettings,
+  target_lang: String,
+}
+
+fn subtitles_file_path(media_dir: &Path) -> PathBuf {
+  media_dir.join("subtitles.json")
+}
+
+fn build_subtitles_from_transcription(media_id: &str, transcription: &serde_json::Value) -> serde_json::Value {
+  let lang = transcription
+    .get("language")
+    .and_then(|v| v.as_str())
+    .unwrap_or("")
+    .trim()
+    .to_string();
+
+  let mut segs: Vec<serde_json::Value> = Vec::new();
+  if let Some(arr) = transcription.get("segments").and_then(|v| v.as_array()) {
+    for s in arr {
+      let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
+      let start = s.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0);
+      let end = s.get("end").and_then(|v| v.as_f64()).unwrap_or(start);
+      let text = s.get("text").and_then(|v| v.as_str()).unwrap_or("").trim();
+      if text.is_empty() {
+        continue;
+      }
+      segs.push(serde_json::json!({
+        "id": if !id.is_empty() { id.to_string() } else { format!("seg-{}", nanoid()) },
+        "start": start,
+        "end": end.max(start),
+        "text": text,
+      }));
+    }
+  }
+
+  serde_json::json!({
+    "version": 1,
+    "mediaId": media_id,
+    "generatedAt": now_iso(),
+    "tracks": [
+      {
+        "id": "original",
+        "label": "Original",
+        "language": lang,
+        "kind": "transcription",
+        "segments": segs,
+      }
+    ]
+  })
+}
+
+fn get_track_mut<'a>(subs: &'a mut serde_json::Value, track_id: &str) -> Option<&'a mut serde_json::Value> {
+  let arr = subs.get_mut("tracks")?.as_array_mut()?;
+  for t in arr.iter_mut() {
+    if t.get("id").and_then(|v| v.as_str()) == Some(track_id) {
+      return Some(t);
+    }
+  }
+  None
+}
+
+fn upsert_track(subs: &mut serde_json::Value, track: serde_json::Value) {
+  let id = track.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+  if id.trim().is_empty() {
+    return;
+  }
+  if let Some(existing) = get_track_mut(subs, &id) {
+    *existing = track;
+    return;
+  }
+  if let Some(arr) = subs.get_mut("tracks").and_then(|v| v.as_array_mut()) {
+    arr.push(track);
+  } else {
+    subs["tracks"] = serde_json::Value::Array(vec![track]);
+  }
+}
+
+fn parse_translation_pairs(raw: &str) -> Result<Vec<(String, String)>, String> {
+  let v = try_parse_json_value(raw).ok_or_else(|| {
+    let preview = raw.trim().chars().take(400).collect::<String>();
+    format!("translate output missing JSON\nraw (first 400 chars):\n{preview}")
+  })?;
+  let arr_opt = if v.is_array() {
+    v.as_array().cloned()
+  } else {
+    v.get("segments").and_then(|x| x.as_array()).cloned()
+  };
+  let Some(arr) = arr_opt else {
+    return Err("translate output missing segments array".to_string());
+  };
+
+  let mut out: Vec<(String, String)> = Vec::new();
+  for it in arr {
+    let id = it.get("id").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let text = it.get("text").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    if id.is_empty() || text.is_empty() {
+      continue;
+    }
+    out.push((id, text));
+  }
+  if out.is_empty() {
+    return Err("translate output had no usable segments".to_string());
+  }
+  Ok(out)
+}
+
+async fn translate_subtitle_pairs_with_ai(
+  ai: &AiSettings,
+  target_lang: &str,
+  payload_json: &str,
+) -> Result<Vec<(String, String)>, String> {
+  let lang = target_lang.trim();
+  let payload = payload_json.trim();
+  if lang.is_empty() {
+    return Err("target_lang is empty".to_string());
+  }
+  if payload.is_empty() {
+    return Err("translate payload is empty".to_string());
+  }
+
+  // Multi-step retry with increasingly strict wording.
+  // NOTE: We intentionally do NOT ask for chain-of-thought / analysis.
+  let prompt1 = format!(
+    "You are a translation engine. Translate each item to {lang}.\n\n\
+STRICT OUTPUT RULES (follow exactly):\n\
+- Output ONLY valid JSON. No markdown, no explanation, no analysis.\n\
+- Keep the same ids.\n\
+- Do NOT add or remove items.\n\
+\n\
+Output schema:\n{{\"segments\":[{{\"id\":string,\"text\":string}}]}}\n\n\
+Input JSON array:\n{payload}\n",
+    lang = lang,
+    payload = payload
+  );
+
+  let prompt2 = format!(
+    "Translate to {lang}. Return ONLY ONE JSON object (no code fences).\n\
+Schema: {{\"segments\":[{{\"id\":string,\"text\":string}}]}}\n\
+Rules: keep ids, same count, no extra keys.\n\n\
+Input:\n{payload}\n",
+    lang = lang,
+    payload = payload
+  );
+
+  let prompt3 = format!(
+    "Your previous output was invalid. Output ONLY valid JSON (no markdown).\n\
+Schema: {{\"segments\":[{{\"id\":string,\"text\":string}}]}}\n\
+Return the same number of items with the same ids.\n\n\
+Input:\n{payload}\n",
+    payload = payload
+  );
+
+  let prompts = [prompt1, prompt2, prompt3];
+  let mut last_err: Option<String> = None;
+
+  for p in prompts {
+    let raw = match ai.provider {
+      AiProvider::OpenaiCompatible => {
+        let model = ai.openai.chat_model.trim();
+        let messages = vec![
+          serde_json::json!({ "role": "system", "content": "You are a translation engine. Return ONLY JSON." }),
+          serde_json::json!({ "role": "user", "content": p }),
+        ];
+
+        // Try json_object mode first; fall back to normal if unsupported.
+        match openai_chat_completion_json_object(&ai.openai.base_url, &ai.openai.api_key, model, messages.clone()).await {
+          Ok(v) => v,
+          Err(_) => openai_chat_completion(&ai.openai.base_url, &ai.openai.api_key, model, messages).await?,
+        }
+      }
+      AiProvider::Gemini => {
+        gemini_generate_content(&ai.gemini.base_url, &ai.gemini.api_key, &ai.gemini.model, &p).await?
+      }
+    };
+
+    match parse_translation_pairs(&raw) {
+      Ok(pairs) => return Ok(pairs),
+      Err(e) => {
+        last_err = Some(e);
+        continue;
+      }
+    }
+  }
+
+  Err(last_err.unwrap_or_else(|| "translate failed".to_string()))
+}
+
+async fn load_subtitles_json(media_dir: &Path) -> Option<serde_json::Value> {
+  try_load_json(&subtitles_file_path(media_dir)).await
+}
+
+#[tauri::command]
+async fn load_subtitles(
+  app: tauri::AppHandle,
+  args: MediaDirArgs,
+  state: State<'_, Arc<AppState>>,
+) -> Result<Option<serde_json::Value>, String> {
+  let dir = state
+    .data_root
+    .get_or_try_init(|| async { portable::resolve_data_root(&app) })
+    .await?;
+  let media_id = args.media_id.trim().to_string();
+  validate_media_id(&media_id)?;
+
+  let media_dir = dir.join("media").join(&media_id);
+  if !media_dir.is_dir() {
+    return Err("media not found".to_string());
+  }
+  Ok(load_subtitles_json(&media_dir).await)
+}
+
+#[tauri::command]
+async fn ensure_subtitles(
+  app: tauri::AppHandle,
+  args: MediaDirArgs,
+  state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+  let dir = state
+    .data_root
+    .get_or_try_init(|| async { portable::resolve_data_root(&app) })
+    .await?;
+  let media_id = args.media_id.trim().to_string();
+  validate_media_id(&media_id)?;
+
+  let media_dir = dir.join("media").join(&media_id);
+  if !media_dir.is_dir() {
+    return Err("media not found".to_string());
+  }
+
+  if let Some(existing) = load_subtitles_json(&media_dir).await {
+    return Ok(existing);
+  }
+
+  let transcription_path = media_dir.join("transcription.json");
+  if !transcription_path.is_file() {
+    return Err("no transcription found".to_string());
+  }
+  let transcription: serde_json::Value = serde_json::from_slice(
+    &tokio::fs::read(&transcription_path)
+      .await
+      .map_err(|e| format!("read transcription failed: {e}"))?,
+  )
+  .map_err(|e| format!("parse transcription failed: {e}"))?;
+
+  let subs = build_subtitles_from_transcription(&media_id, &transcription);
+  write_json_atomic(&subtitles_file_path(&media_dir), &subs)?;
+  Ok(subs)
+}
+
+#[tauri::command]
+async fn translate_subtitles(
+  app: tauri::AppHandle,
+  args: TranslateSubtitlesArgs,
+  state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+  let dir = state
+    .data_root
+    .get_or_try_init(|| async { portable::resolve_data_root(&app) })
+    .await?;
+  let media_id = args.media_id.trim().to_string();
+  validate_media_id(&media_id)?;
+
+  let target_lang = args.target_lang.trim().to_lowercase();
+  if target_lang.is_empty() {
+    return Err("target_lang is empty".to_string());
+  }
+
+  let media_dir = dir.join("media").join(&media_id);
+  if !media_dir.is_dir() {
+    return Err("media not found".to_string());
+  }
+
+  let mut subs = if let Some(v) = load_subtitles_json(&media_dir).await {
+    v
+  } else {
+    ensure_subtitles(app.clone(), MediaDirArgs { media_id: media_id.clone() }, state).await?
+  };
+
+  let job_id = format!("job-{}", nanoid());
+  let _ = emit_job(&app, JobProgressEvent {
+    job_id: job_id.clone(),
+    media_id: media_id.clone(),
+    job_type: JobType::Subtitle,
+    status: JobStatus::Running,
+    progress: 0.0,
+    message: Some("translating subtitles".to_string()),
+  });
+
+  let result: Result<serde_json::Value, String> = async {
+
+  // Get original track data (clone so we can mutate `subs` later).
+  let orig_track = subs
+    .get("tracks")
+    .and_then(|v| v.as_array())
+    .and_then(|arr| {
+      arr.iter()
+        .find(|t| t.get("id").and_then(|v| v.as_str()) == Some("original"))
+    })
+    .cloned()
+    .ok_or_else(|| "missing original subtitle track".to_string())?;
+
+  let orig_lang = orig_track
+    .get("language")
+    .and_then(|v| v.as_str())
+    .unwrap_or("")
+    .trim()
+    .to_string();
+
+  let orig_segs = orig_track
+    .get("segments")
+    .and_then(|v| v.as_array())
+    .cloned()
+    .unwrap_or_default();
+  if orig_segs.is_empty() {
+    return Err("original subtitle track is empty".to_string());
+  }
+
+  // Translate in chunks.
+  let mut id_order: Vec<String> = Vec::with_capacity(orig_segs.len());
+  let mut id_to_meta: std::collections::HashMap<String, (f64, f64, String)> = std::collections::HashMap::new();
+  for s in &orig_segs {
+    let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let text = s.get("text").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if id.is_empty() || text.is_empty() {
+      continue;
+    }
+    let start = s.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let end = s.get("end").and_then(|v| v.as_f64()).unwrap_or(start);
+    id_order.push(id.clone());
+    id_to_meta.insert(id, (start, end.max(start), text));
+  }
+  if id_order.is_empty() {
+    return Err("original track has no usable segments".to_string());
+  }
+
+  // Prefer one request; fall back to chunking if it fails.
+  let total_chars: usize = id_order
+    .iter()
+    .filter_map(|id| id_to_meta.get(id))
+    .map(|(_, _, t)| t.len())
+    .sum();
+
+  let mut out_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+  let mut translated_pairs_total: usize = 0;
+
+  // 1) Try a single request with the full list.
+  {
+    let _ = emit_job(&app, JobProgressEvent {
+      job_id: job_id.clone(),
+      media_id: media_id.clone(),
+      job_type: JobType::Subtitle,
+      status: JobStatus::Running,
+      progress: 0.05,
+      message: Some("translating 1/1".to_string()),
+    });
+
+    let mut list: Vec<serde_json::Value> = Vec::with_capacity(id_order.len());
+    for id in &id_order {
+      if let Some((_s, _e, text)) = id_to_meta.get(id) {
+        list.push(serde_json::json!({ "id": id, "text": text }));
+      }
+    }
+
+    let payload = serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string());
+    if let Ok(pairs) = translate_subtitle_pairs_with_ai(&args.ai, &target_lang, &payload).await {
+      let denom = list.len().max(1) as f32;
+      let coverage = (pairs.len() as f32) / denom;
+      if coverage < 0.70 {
+        // If the model returned too few items, don't accept partial results;
+        // fall back to chunking for stability.
+        out_map.clear();
+        translated_pairs_total = 0;
+        let _ = emit_job(&app, JobProgressEvent {
+          job_id: job_id.clone(),
+          media_id: media_id.clone(),
+          job_type: JobType::Subtitle,
+          status: JobStatus::Running,
+          progress: 0.08,
+          message: Some("single-pass output incomplete; falling back to chunks".to_string()),
+        });
+      } else {
+        translated_pairs_total += pairs.len();
+        for (id, text) in pairs {
+          out_map.insert(id, text);
+        }
+      }
+    }
+  }
+
+  // 2) If nothing translated, fall back to chunking.
+  if translated_pairs_total == 0 {
+    let chunk_segments: usize = if total_chars <= 70_000 {
+      // Still large, but try fewer chunks than before.
+      260
+    } else if total_chars <= 120_000 {
+      180
+    } else {
+      120
+    };
+
+    let total_chunks = (id_order.len() + chunk_segments - 1) / chunk_segments;
+    if total_chunks == 0 {
+      return Err("no subtitle segments".to_string());
+    }
+
+    for (chunk_idx, chunk) in id_order.chunks(chunk_segments).enumerate() {
+      let _ = emit_job(&app, JobProgressEvent {
+        job_id: job_id.clone(),
+        media_id: media_id.clone(),
+        job_type: JobType::Subtitle,
+        status: JobStatus::Running,
+        progress: (chunk_idx as f32 / total_chunks.max(1) as f32).clamp(0.0, 0.95),
+        message: Some(format!("translating {}/{}", chunk_idx + 1, total_chunks)),
+      });
+
+      let mut list: Vec<serde_json::Value> = Vec::with_capacity(chunk.len());
+      for id in chunk {
+        if let Some((_s, _e, text)) = id_to_meta.get(id) {
+          list.push(serde_json::json!({ "id": id, "text": text }));
+        }
+      }
+
+      let payload = serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string());
+      match translate_subtitle_pairs_with_ai(&args.ai, &target_lang, &payload).await {
+        Ok(pairs) => {
+          translated_pairs_total += pairs.len();
+          for (id, text) in pairs {
+            out_map.insert(id, text);
+          }
+        }
+        Err(e) => {
+          let first = e.lines().next().unwrap_or("translate failed");
+          let preview = first.chars().take(140).collect::<String>();
+          let _ = emit_job(&app, JobProgressEvent {
+            job_id: job_id.clone(),
+            media_id: media_id.clone(),
+            job_type: JobType::Subtitle,
+            status: JobStatus::Running,
+            progress: (chunk_idx as f32 / total_chunks.max(1) as f32).clamp(0.0, 0.95),
+            message: Some(format!("chunk {}/{} failed: {}", chunk_idx + 1, total_chunks, preview)),
+          });
+          continue;
+        }
+      }
+    }
+  }
+
+  if translated_pairs_total == 0 {
+    return Err("translation produced no segments".to_string());
+  }
+
+  // Build translated track.
+  let translated_id = if target_lang.starts_with("zh") { "zh".to_string() } else { target_lang.clone() };
+  let translated_label = if translated_id == "zh" { "中文".to_string() } else { translated_id.clone() };
+
+  let mut translated_segs: Vec<serde_json::Value> = Vec::new();
+  let mut bilingual_segs: Vec<serde_json::Value> = Vec::new();
+
+  for id in &id_order {
+    let Some((start, end, orig_text)) = id_to_meta.get(id) else { continue; };
+    let tr_text = out_map.get(id).cloned().unwrap_or_else(|| orig_text.clone());
+
+    translated_segs.push(serde_json::json!({
+      "id": id,
+      "start": start,
+      "end": end,
+      "text": tr_text.clone(),
+    }));
+
+    bilingual_segs.push(serde_json::json!({
+      "id": id,
+      "start": start,
+      "end": end,
+      "text": format!("{}\n{}", orig_text, tr_text),
+    }));
+  }
+
+  upsert_track(
+    &mut subs,
+    serde_json::json!({
+      "id": translated_id,
+      "label": translated_label,
+      "language": target_lang,
+      "kind": "ai_translate",
+      "generatedAt": now_iso(),
+      "segments": translated_segs,
+    }),
+  );
+
+  upsert_track(
+    &mut subs,
+    serde_json::json!({
+      "id": "bilingual",
+      "label": "双语",
+      "language": format!("{}+{}", orig_lang, target_lang),
+      "kind": "derived",
+      "generatedAt": now_iso(),
+      "segments": bilingual_segs,
+    }),
+  );
+
+  subs["generatedAt"] = serde_json::Value::String(now_iso());
+
+  write_json_atomic(&subtitles_file_path(&media_dir), &subs)?;
+  Ok(subs)
+  }
+  .await;
+
+  match result {
+    Ok(v) => {
+      let _ = emit_job(&app, JobProgressEvent {
+        job_id: job_id.clone(),
+        media_id: media_id.clone(),
+        job_type: JobType::Subtitle,
+        status: JobStatus::Succeeded,
+        progress: 1.0,
+        message: Some("subtitle translation finished".to_string()),
+      });
+      Ok(v)
+    }
+    Err(e) => {
+      let _ = emit_job(&app, JobProgressEvent {
+        job_id: job_id.clone(),
+        media_id: media_id.clone(),
+        job_type: JobType::Subtitle,
+        status: JobStatus::Failed,
+        progress: 1.0,
+        message: Some(e.clone()),
+      });
+      Err(e)
+    }
+  }
+}
+
+#[tauri::command]
+async fn get_media_storage_info(
+  app: tauri::AppHandle,
+  args: MediaDirArgs,
+  state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+  let dir = state
+    .data_root
+    .get_or_try_init(|| async { portable::resolve_data_root(&app) })
+    .await?;
+
+  let media_id = args.media_id.trim().to_string();
+  validate_media_id(&media_id)?;
+
+  let media_dir = dir.join("media").join(&media_id);
+  if !media_dir.is_dir() {
+    return Err("media not found".to_string());
+  }
+
+  let mut files: Vec<String> = Vec::new();
+  if let Ok(rd) = std::fs::read_dir(&media_dir) {
+    for e in rd.flatten() {
+      let p = e.path();
+      if p.is_file() {
+        files.push(p.to_string_lossy().to_string());
+      }
+    }
+  }
+  files.sort();
+
+  Ok(serde_json::json!({
+    "media_id": media_id,
+    "data_root": dir.to_string_lossy().to_string(),
+    "media_dir": media_dir.to_string_lossy().to_string(),
+    "files": files,
+  }))
+}
+
+#[tauri::command]
+async fn reveal_media_dir(
+  app: tauri::AppHandle,
+  args: MediaDirArgs,
+  state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+  let dir = state
+    .data_root
+    .get_or_try_init(|| async { portable::resolve_data_root(&app) })
+    .await?;
+
+  let media_id = args.media_id.trim().to_string();
+  validate_media_id(&media_id)?;
+
+  let media_dir = dir.join("media").join(&media_id);
+  if !media_dir.is_dir() {
+    return Err("media not found".to_string());
+  }
+
+  #[cfg(target_os = "windows")]
+  {
+    std::process::Command::new("explorer")
+      .arg(media_dir)
+      .spawn()
+      .map_err(|e| format!("failed to open explorer: {e}"))?;
+    return Ok(());
+  }
+
+  #[cfg(target_os = "macos")]
+  {
+    std::process::Command::new("open")
+      .arg(media_dir)
+      .spawn()
+      .map_err(|e| format!("failed to open folder: {e}"))?;
+    return Ok(());
+  }
+
+  #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+  {
+    std::process::Command::new("xdg-open")
+      .arg(media_dir)
+      .spawn()
+      .map_err(|e| format!("failed to open folder: {e}"))?;
+    return Ok(());
+  }
+}
+
 #[tauri::command]
 async fn import_url(app: tauri::AppHandle, args: ImportUrlArgs, state: State<'_, Arc<AppState>>) -> Result<serde_json::Value, String> {
-  let ImportUrlArgs { url, media_id } = args;
+  let ImportUrlArgs { url, media_id, quality } = args;
 
   let url = if url.starts_with("http://") || url.starts_with("https://") {
     url
@@ -284,6 +1003,7 @@ async fn import_url(app: tauri::AppHandle, args: ImportUrlArgs, state: State<'_,
     youtube_compat: is_youtube,
     js_runtime,
     insecure,
+    format: select_ytdlp_format(has_ffmpeg, quality.as_deref()),
   };
 
   match run_ytdlp_download(&app, &job_id, &media_id, &ytdlp, &url, &output_template, &opts).await {
@@ -806,6 +1526,16 @@ struct ChatMediaArgs {
   media_id: String,
   ai: AiSettings,
   messages: Vec<ChatMessageIn>,
+  #[serde(default = "default_true")]
+  include_transcription: bool,
+  #[serde(default)]
+  include_summary: bool,
+  #[serde(default)]
+  user_lang: Option<String>,
+}
+
+fn default_true() -> bool {
+  true
 }
 
 #[tauri::command]
@@ -1350,6 +2080,8 @@ async fn optimize_transcription(
 #[serde(rename_all = "camelCase")]
 struct ExportMediaArgs {
   media_id: String,
+  #[serde(default)]
+  export_dir: Option<String>,
 }
 
 fn format_mmss(seconds: f64) -> String {
@@ -1474,6 +2206,8 @@ async fn export_media(
       try_load_json(&media_dir.join("summary.json")).await
     };
 
+    let subtitles = try_load_json(&media_dir.join("subtitles.json")).await;
+
     let notes = media_item
       .as_ref()
       .and_then(|m| m.get("notes").cloned())
@@ -1484,31 +2218,56 @@ async fn export_media(
       .unwrap_or_else(|| serde_json::json!([]));
 
     let safe_name = sanitize_filename_component(&media_name);
-    let export_dir = dir
-      .join("exports")
-      .join(format!("{}_{}", safe_name, now_compact()));
+    let export_dir = if let Some(base) = args.export_dir.as_ref().map(|s| s.trim().to_string()) {
+      let base = base.trim();
+      if base.is_empty() {
+        dir.join("exports").join(format!("{}_{}", safe_name, now_compact()))
+      } else {
+        std::path::PathBuf::from(base).join(format!("{}_{}", safe_name, now_compact()))
+      }
+    } else {
+      dir.join("exports").join(format!("{}_{}", safe_name, now_compact()))
+    };
 
     tokio::fs::create_dir_all(&export_dir)
       .await
       .map_err(|e| format!("create export dir failed: {e}"))?;
 
     // Determine steps so progress feels real.
-    let mut planned: Vec<(&str, bool)> = Vec::new();
-    planned.push(("notes.json", true));
-    planned.push(("bookmarks.json", true));
-    planned.push(("transcription.json", transcription.is_some()));
-    planned.push(("transcript.txt", transcription.is_some()));
-    planned.push(("transcript.srt", transcription.is_some()));
-    planned.push(("transcript.vtt", transcription.is_some()));
-    planned.push(("summary.json", summary.is_some()));
+    let mut planned: Vec<(String, bool)> = Vec::new();
+    planned.push(("notes.json".to_string(), true));
+    planned.push(("bookmarks.json".to_string(), true));
+    planned.push(("transcription.json".to_string(), transcription.is_some()));
+    planned.push(("transcript.txt".to_string(), transcription.is_some()));
+    planned.push(("transcript.srt".to_string(), transcription.is_some()));
+    planned.push(("transcript.vtt".to_string(), transcription.is_some()));
+    planned.push(("summary.json".to_string(), summary.is_some()));
     planned.push((
-      "summary.md",
+      "summary.md".to_string(),
       summary
         .as_ref()
         .and_then(|s| s.get("content"))
         .and_then(|v| v.as_str())
         .is_some(),
     ));
+
+    if let Some(subs) = subtitles.as_ref() {
+      if let Some(tracks) = subs.get("tracks").and_then(|v| v.as_array()) {
+        for tr in tracks {
+          let id = tr.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
+          if id.is_empty() {
+            continue;
+          }
+          let segs_ok = tr.get("segments").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false);
+          if !segs_ok {
+            continue;
+          }
+          let safe_id = sanitize_filename_component(id);
+          planned.push((format!("subtitles.{safe_id}.srt"), true));
+          planned.push((format!("subtitles.{safe_id}.vtt"), true));
+        }
+      }
+    }
 
     let total_steps = planned.iter().filter(|(_, ok)| *ok).count().max(1) as f32;
     let mut done_steps: f32 = 0.0;
@@ -1597,6 +2356,47 @@ async fn export_media(
       }
     }
 
+    // Export subtitle tracks if present.
+    if let Some(subs) = subtitles {
+      if let Some(tracks) = subs.get("tracks").and_then(|v| v.as_array()) {
+        for tr in tracks {
+          let id = tr.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
+          if id.is_empty() {
+            continue;
+          }
+          let segments = extract_transcript_segments(tr);
+          if segments.is_empty() {
+            continue;
+          }
+
+          let safe_id = sanitize_filename_component(id);
+
+          let mut srt = String::new();
+          for (i, (start, end, text)) in segments.iter().enumerate() {
+            srt.push_str(&format!("{}\n{} --> {}\n{}\n\n", i + 1, format_srt_time(*start), format_srt_time(*end), text));
+          }
+          let srt_name = format!("subtitles.{safe_id}.srt");
+          tokio::fs::write(export_dir.join(&srt_name), srt)
+            .await
+            .map_err(|e| format!("write {srt_name} failed: {e}"))?;
+          files.push(export_dir.join(&srt_name).to_string_lossy().to_string());
+          step(&srt_name, &format!("wrote {srt_name}"), &job_id, &media_id, &app, &mut done_steps);
+
+          let mut vtt = String::new();
+          vtt.push_str("WEBVTT\n\n");
+          for (start, end, text) in segments {
+            vtt.push_str(&format!("{} --> {}\n{}\n\n", format_vtt_time(start), format_vtt_time(end), text));
+          }
+          let vtt_name = format!("subtitles.{safe_id}.vtt");
+          tokio::fs::write(export_dir.join(&vtt_name), vtt)
+            .await
+            .map_err(|e| format!("write {vtt_name} failed: {e}"))?;
+          files.push(export_dir.join(&vtt_name).to_string_lossy().to_string());
+          step(&vtt_name, &format!("wrote {vtt_name}"), &job_id, &media_id, &app, &mut done_steps);
+        }
+      }
+    }
+
     Ok(serde_json::json!({
       "media_id": media_id,
       "job_id": job_id,
@@ -1652,7 +2452,7 @@ async fn chat_media(
   }
 
   let transcription_path = media_dir.join("transcription.json");
-  let transcription = if transcription_path.is_file() {
+  let transcription = if args.include_transcription && transcription_path.is_file() {
     serde_json::from_slice::<serde_json::Value>(
       &tokio::fs::read(&transcription_path)
         .await
@@ -1663,7 +2463,34 @@ async fn chat_media(
     None
   };
 
-  let reply = chat_with_media_context(&media_id, transcription.as_ref(), &args.ai, &args.messages).await?;
+  let summary_md: Option<String> = if args.include_summary {
+    let p = media_dir.join("summary.json");
+    if p.is_file() {
+      if let Ok(v) = serde_json::from_slice::<serde_json::Value>(
+        &tokio::fs::read(&p)
+          .await
+          .map_err(|e| format!("read summary failed: {e}"))?,
+      ) {
+        v.get("content").and_then(|c| c.as_str()).map(|s| s.to_string())
+      } else {
+        None
+      }
+    } else {
+      None
+    }
+  } else {
+    None
+  };
+
+  let reply = chat_with_media_context(
+    &media_id,
+    transcription.as_ref(),
+    summary_md.as_deref(),
+    args.user_lang.as_deref(),
+    &args.ai,
+    &args.messages,
+  )
+  .await?;
 
   Ok(serde_json::json!({
     "message": {
@@ -1894,6 +2721,8 @@ struct YtDlpRunOpts {
   ffmpeg_dir: Option<PathBuf>,
   cookies_path: Option<PathBuf>,
 
+  format: String,
+
   retries: u32,
   fragment_retries: u32,
   extractor_retries: u32,
@@ -1904,6 +2733,35 @@ struct YtDlpRunOpts {
   youtube_compat: bool,
   js_runtime: Option<String>,
   insecure: bool,
+}
+
+fn select_ytdlp_format(has_ffmpeg: bool, quality: Option<&str>) -> String {
+  // Default: keep compatibility (mp4 merge when possible), allow a simple height cap.
+  let q = quality.unwrap_or("best").trim().to_lowercase();
+  let height: Option<u32> = match q.as_str() {
+    "1080p" | "1080" => Some(1080),
+    "720p" | "720" => Some(720),
+    "480p" | "480" => Some(480),
+    "360p" | "360" => Some(360),
+    "best" | "auto" | "" => None,
+    _ => None,
+  };
+
+  if has_ffmpeg {
+    if let Some(h) = height {
+      // Prefer mp4+h264-ish sources when available, fallback to any container.
+      return format!(
+        "bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={h}]+bestaudio/best[height<={h}][ext=mp4]/best[height<={h}]/best",
+        h = h
+      );
+    }
+    return "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best".to_string();
+  }
+
+  if let Some(h) = height {
+    return format!("best[height<={h}][ext=mp4]/best[height<={h}]/best", h = h);
+  }
+  "best".to_string()
 }
 
 fn is_retryable_ytdlp_failure(stderr_tail: &str) -> bool {
@@ -1942,7 +2800,7 @@ async fn run_ytdlp_download(
     .arg("--concurrent-fragments")
     .arg(opts.concurrent_fragments.to_string())
     .arg("-f")
-    .arg(if opts.has_ffmpeg { "bestvideo+bestaudio/best" } else { "best" });
+    .arg(opts.format.as_str());
 
   if opts.has_ffmpeg {
     cmd.arg("--merge-output-format").arg("mp4");
@@ -5079,28 +5937,26 @@ fn split_text_chunks(text: &str, max_chars: usize) -> Vec<String> {
   out
 }
 
-fn extract_openai_chat_content(v: &serde_json::Value) -> Option<String> {
-  let choice0 = v.get("choices")?.as_array()?.first()?;
+fn extract_openai_chat_delta_parts(v: &serde_json::Value) -> (Option<String>, Option<String>) {
+  let Some(choice0) = v.get("choices").and_then(|x| x.as_array()).and_then(|a| a.first()) else {
+    return (None, None);
+  };
 
-  // Streaming: choices[0].delta.content
+  // Streaming: choices[0].delta.{content,reasoning_content,text}
   if let Some(delta) = choice0.get("delta") {
+    // Prefer normal content for user-visible output.
     if let Some(s) = delta.get("content").and_then(|x| x.as_str()) {
       if !s.is_empty() {
-        return Some(s.to_string());
-      }
-    }
-
-    // Some OpenAI-compatible gateways stream under different keys.
-    if let Some(s) = delta.get("reasoning_content").and_then(|x| x.as_str()) {
-      if !s.is_empty() {
-        return Some(s.to_string());
+        return (Some(s.to_string()), None);
       }
     }
     if let Some(s) = delta.get("text").and_then(|x| x.as_str()) {
       if !s.is_empty() {
-        return Some(s.to_string());
+        return (Some(s.to_string()), None);
       }
     }
+
+    // Some gateways stream content as an array of parts.
     if let Some(arr) = delta.get("content").and_then(|x| x.as_array()) {
       let mut out = String::new();
       for p in arr {
@@ -5113,10 +5969,17 @@ fn extract_openai_chat_content(v: &serde_json::Value) -> Option<String> {
         }
       }
       if !out.is_empty() {
-        return Some(out);
+        return (Some(out), None);
       }
     }
-    return None;
+
+    // Keep reasoning separate; do NOT mix it into content (breaks JSON-only flows).
+    if let Some(s) = delta.get("reasoning_content").and_then(|x| x.as_str()) {
+      if !s.is_empty() {
+        return (None, Some(s.to_string()));
+      }
+    }
+    return (None, None);
   }
 
   // Non-streaming: choices[0].message.content
@@ -5124,12 +5987,18 @@ fn extract_openai_chat_content(v: &serde_json::Value) -> Option<String> {
     .get("message")
     .and_then(|m| m.get("content"))
     .and_then(|c| c.as_str())
-    .unwrap_or("");
-  if content.is_empty() { None } else { Some(content.to_string()) }
+    .unwrap_or("")
+    .to_string();
+  if content.trim().is_empty() {
+    (None, None)
+  } else {
+    (Some(content), None)
+  }
 }
 
 fn parse_openai_sse_text(text: &str) -> Result<String, String> {
-  let mut out = String::new();
+  let mut content_out = String::new();
+  let mut reasoning_out = String::new();
   for line in text.lines() {
     let t = line.trim();
     if t.is_empty() {
@@ -5148,22 +6017,31 @@ fn parse_openai_sse_text(text: &str) -> Result<String, String> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else {
       continue;
     };
-    if let Some(s) = extract_openai_chat_content(&v) {
-      out.push_str(&s);
+    let (c, r) = extract_openai_chat_delta_parts(&v);
+    if let Some(s) = c {
+      content_out.push_str(&s);
+    }
+    if let Some(s) = r {
+      reasoning_out.push_str(&s);
     }
   }
-  if out.trim().is_empty() {
-    Err("openai event-stream returned no content".to_string())
-  } else {
-    Ok(out)
+
+  if !content_out.trim().is_empty() {
+    return Ok(content_out);
   }
+  if !reasoning_out.trim().is_empty() {
+    // Fallback for providers that only stream reasoning_content.
+    return Ok(reasoning_out);
+  }
+  Err("openai event-stream returned no content".to_string())
 }
 
 async fn read_openai_event_stream(resp: reqwest::Response) -> Result<String, String> {
   use tokio::time::{timeout, Duration};
   let mut stream = resp.bytes_stream();
   let mut buf = String::new();
-  let mut out = String::new();
+  let mut content_out = String::new();
+  let mut reasoning_out = String::new();
 
   loop {
     let next = timeout(Duration::from_secs(60), stream.next())
@@ -5190,10 +6068,12 @@ async fn read_openai_event_stream(resp: reqwest::Response) -> Result<String, Str
       };
       let payload = data.trim();
       if payload == "[DONE]" {
-        return if out.trim().is_empty() {
-          Err("openai event-stream returned no content".to_string())
+        return if !content_out.trim().is_empty() {
+          Ok(content_out)
+        } else if !reasoning_out.trim().is_empty() {
+          Ok(reasoning_out)
         } else {
-          Ok(out)
+          Err("openai event-stream returned no content".to_string())
         };
       }
       if !(payload.starts_with('{') && payload.ends_with('}')) {
@@ -5202,8 +6082,12 @@ async fn read_openai_event_stream(resp: reqwest::Response) -> Result<String, Str
       let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else {
         continue;
       };
-      if let Some(s) = extract_openai_chat_content(&v) {
-        out.push_str(&s);
+      let (c, r) = extract_openai_chat_delta_parts(&v);
+      if let Some(s) = c {
+        content_out.push_str(&s);
+      }
+      if let Some(s) = r {
+        reasoning_out.push_str(&s);
       }
     }
   }
@@ -5220,18 +6104,24 @@ async fn read_openai_event_stream(resp: reqwest::Response) -> Result<String, Str
         break;
       }
       if let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) {
-        if let Some(s) = extract_openai_chat_content(&v) {
-          out.push_str(&s);
+        let (c, r) = extract_openai_chat_delta_parts(&v);
+        if let Some(s) = c {
+          content_out.push_str(&s);
+        }
+        if let Some(s) = r {
+          reasoning_out.push_str(&s);
         }
       }
     }
   }
 
-  if out.trim().is_empty() {
-    Err("openai event-stream returned no content".to_string())
-  } else {
-    Ok(out)
+  if !content_out.trim().is_empty() {
+    return Ok(content_out);
   }
+  if !reasoning_out.trim().is_empty() {
+    return Ok(reasoning_out);
+  }
+  Err("openai event-stream returned no content".to_string())
 }
 
 async fn openai_chat_completion(
@@ -5247,14 +6137,44 @@ async fn openai_chat_completion(
   if model.trim().is_empty() {
     return Err("openai model is empty".to_string());
   }
-  let url = format!("{base}/chat/completions");
-
   let body = serde_json::json!({
     "model": model,
     "messages": messages,
     "temperature": 0.2,
     "stream": false,
   });
+  openai_chat_completion_with_body(&base, api_key, body).await
+}
+
+async fn openai_chat_completion_json_object(
+  base_url: &str,
+  api_key: &str,
+  model: &str,
+  messages: Vec<serde_json::Value>,
+) -> Result<String, String> {
+  let base = normalize_base_url(base_url);
+  if base.is_empty() {
+    return Err("openai baseUrl is empty".to_string());
+  }
+  if model.trim().is_empty() {
+    return Err("openai model is empty".to_string());
+  }
+  let body = serde_json::json!({
+    "model": model,
+    "messages": messages,
+    "temperature": 0.0,
+    "stream": false,
+    "response_format": { "type": "json_object" }
+  });
+  openai_chat_completion_with_body(&base, api_key, body).await
+}
+
+async fn openai_chat_completion_with_body(
+  base: &str,
+  api_key: &str,
+  body: serde_json::Value,
+) -> Result<String, String> {
+  let url = format!("{base}/chat/completions");
 
   let client = reqwest::Client::new();
   let mut req = client
@@ -6001,6 +6921,8 @@ fn build_chat_context(transcription: Option<&serde_json::Value>, query: &str) ->
 async fn chat_with_media_context(
   _media_id: &str,
   transcription: Option<&serde_json::Value>,
+  summary_md: Option<&str>,
+  user_lang: Option<&str>,
   ai: &AiSettings,
   messages: &[ChatMessageIn],
 ) -> Result<String, String> {
@@ -6008,15 +6930,34 @@ async fn chat_with_media_context(
   let query = last_user.map(|m| m.content.as_str()).unwrap_or("");
   let ctx = build_chat_context(transcription, query);
 
+  let lang_hint = user_lang.unwrap_or("").trim().to_lowercase();
+  let prefer_zh = lang_hint.starts_with("zh");
+  let prefer_en = lang_hint.starts_with("en");
+
   match ai.provider {
     AiProvider::OpenaiCompatible => {
       let mut out_msgs: Vec<serde_json::Value> = Vec::new();
       let mut sys = String::from("You are a helpful assistant for a media player. Answer using the user's language. ");
+      if prefer_zh {
+        sys.push_str("Prefer Chinese. ");
+      } else if prefer_en {
+        sys.push_str("Prefer English. ");
+      }
       sys.push_str("If you reference transcript facts, include timestamps like [MM:SS]. ");
       if !ctx.trim().is_empty() {
         sys.push_str("Use the provided transcript excerpts as the primary source of truth.");
       }
       out_msgs.push(serde_json::json!({ "role": "system", "content": sys }));
+
+      if let Some(s) = summary_md {
+        let s = s.trim();
+        if !s.is_empty() {
+          out_msgs.push(serde_json::json!({
+            "role": "user",
+            "content": format!("AI summary (may be partial):\n\n{s}"),
+          }));
+        }
+      }
 
       if !ctx.trim().is_empty() {
         out_msgs.push(serde_json::json!({
@@ -6042,7 +6983,21 @@ async fn chat_with_media_context(
       // Gemini: send a single prompt (keep MVP simple).
       let mut prompt = String::new();
       prompt.push_str("You are a helpful assistant for a media transcript. Answer using the user's language. ");
+      if prefer_zh {
+        prompt.push_str("Prefer Chinese. ");
+      } else if prefer_en {
+        prompt.push_str("Prefer English. ");
+      }
       prompt.push_str("If you reference transcript facts, include timestamps like [MM:SS].\n\n");
+
+      if let Some(s) = summary_md {
+        let s = s.trim();
+        if !s.is_empty() {
+          prompt.push_str("AI summary (may be partial):\n\n");
+          prompt.push_str(s);
+          prompt.push_str("\n\n");
+        }
+      }
       if !ctx.trim().is_empty() {
         prompt.push_str("Transcript excerpts:\n\n");
         prompt.push_str(&ctx);
@@ -6061,6 +7016,8 @@ fn main() {
 
   tauri::Builder::default()
     .manage(state)
+    .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_shell::init())
     .setup(|app| {
       // Resolve data root early so we fail fast on permission issues.
       // We also allow only the media directory for the asset protocol, so
@@ -6089,6 +7046,13 @@ fn main() {
     })
     .invoke_handler(tauri::generate_handler![
       get_data_root,
+      get_media_storage_info,
+      reveal_media_dir,
+      delete_media_storage,
+      stage_external_file,
+      load_subtitles,
+      ensure_subtitles,
+      translate_subtitles,
       load_state,
       save_state,
       import_url,

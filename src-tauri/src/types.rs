@@ -8,6 +8,7 @@ pub enum JobType {
     Import,
     Summary,
     Optimize,
+    Subtitle,
     Export,
 }
 
