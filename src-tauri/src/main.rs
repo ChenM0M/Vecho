@@ -7967,9 +7967,7 @@ fn main() {
       #[cfg(target_os = "macos")]
       if let Some(win) = app.get_webview_window("main") {
         let _ = win.set_decorations(true);
-        #[allow(unused_imports)]
-        use tauri::window::TitleBarStyle;
-        let _ = win.set_title_bar_style(TitleBarStyle::Overlay);
+        let _ = win.set_title_bar_style(tauri::TitleBarStyle::Overlay);
       }
 
       Ok(())
