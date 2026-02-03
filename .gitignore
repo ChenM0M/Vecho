@@ -15,6 +15,10 @@ build_output.txt
 # Local tooling
 .claude/
 
+# Editor
+.vscode/
+.idea/
+
 # Local scratch
 _tmp/
 

@@ -1,20 +1,60 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Vecho Studio
 
-# Run and deploy your AI Studio app
+Vecho Studio is a Tauri + Angular desktop app for organizing media, generating transcripts, and producing AI-assisted summaries/notes.
 
-This contains everything you need to run your app locally.
+## Development
 
-View your app in AI Studio: https://ai.studio/apps/drive/1p4-1EN4R1HqOxbjIXLNbiXG1qGfFOgKj
+Prerequisites:
 
-## Run Locally
+- Node.js 22+
+- Rust (stable)
+- Platform dependencies for Tauri (see Tauri prerequisites for your OS)
 
-**Prerequisites:**  Node.js
+Install dependencies:
 
+```bash
+npm ci
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Run (desktop):
+
+```bash
+npm run tauri:dev
+```
+
+Run (web-only):
+
+```bash
+npm run dev
+```
+
+Build (desktop bundles):
+
+```bash
+npm run tauri:build
+```
+
+## Sidecars
+
+The app can download real `ffmpeg`/`ffprobe`/`yt-dlp` on first run. If you want to bundle the real binaries instead, put them under `sidecars/<target-triple>/` and run:
+
+```bash
+npm run sidecars:sync
+```
+
+## CI / Releases
+
+- Pushes and PRs run a GitHub Actions build check.
+- Pushing a version tag (e.g. `v0.1.0`) builds installers for Windows/macOS/Linux and publishes a GitHub Release.
+- Release notes are auto-generated from commits.
+
+Tag & release:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+## Portable mode
+
+Create a `portable.flag` next to the executable (or set `VECHO_PORTABLE=1`) to store data in `./data/`.
