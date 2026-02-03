@@ -37,40 +37,56 @@ function createDefaultSettings(): AppSettings {
 
     const defaultSummaryTemplate = language === 'zh'
         ? (
-            '你正在为一个媒体转写内容生成【最终总结】。\n\n'
+            '你正在为一个媒体转写内容生成【最终总结】。\n'
+            + '输出语言：简体中文（无论原视频语言是什么）。\n\n'
             + '只返回 JSON（不要代码块）。\n'
             + 'Schema:\n'
             + '{\n'
             + '  "content": string (markdown),\n'
             + '  "keyPoints": string[] (optional),\n'
-            + '  "chapters": [{"timestamp": number, "title": string, "summary": string?}] (optional)\n'
+            + '  "chapters": [{"timestamp": number, "title": string, "summary": string?}] (optional),\n'
+            + '  "timeline": {\n'
+            + '    "title": string,\n'
+            + '    "lanes": [{"label": string, "segments": [{"start": number, "end": number, "title": string}]}]\n'
+            + '  },\n'
+            + '  "mindmap": {"root": string, "children": [{"label": string, "children": []}]}\n'
             + '}\n\n'
             + '规则：\n'
-            + '- "content" 必须是 markdown。\n'
+            + '- "content" 必须是 markdown，且不要包含 mermaid 代码块（图会由应用自动生成）。\n'
             + '- 引用事实时请带上时间戳 [MM:SS]。\n'
-            + '- 在 markdown 中包含两个 mermaid 图（用 fenced code block）：\n'
-            + '  1) 时间线（叙事驱动）flowchart LR（不要 gantt）\n'
-            + '  2) 逻辑思维导图 mindmap\n'
-            + '- mermaid 语法尽量简单稳健，节点 ID 避免奇怪字符，把可读文字放 label。\n\n'
+            + '- "chapters" 的 timestamp 使用秒（number），必须递增。\n'
+            + '- "timeline" 用于生成类似甘特图的「视频叙事流程」：\n'
+            + '  - 固定 4 条 lane（按顺序）：概念定义 / 核心乐趣 / 案例拆解 / 深度总结（没有也要给空 segments）。\n'
+            + '  - 每个 segment 必须有 start/end（秒），且 end > start。\n'
+            + '  - title 简短，避免使用英文冒号/逗号/箭头/括号等符号。\n'
+            + '- "mindmap" 用于生成「逻辑脑图」：至少 3 层（尽量 4 层），至少 15 个节点，避免过于简略。\n'
+            + '- 不要编造转写里没有的信息；不确定就写“未提及”。\n\n'
             + '输入（{{inputType}}）：\n\n'
             + '{{input}}\n'
         )
         : (
-            'You are creating the FINAL summary for a media transcript.\n\n'
+            'You are creating the FINAL summary for a media transcript.\n'
+            + 'Output language: English.\n\n'
             + 'Return ONLY JSON (no code fences).\n'
             + 'Schema:\n'
             + '{\n'
             + '  "content": string (markdown),\n'
             + '  "keyPoints": string[] (optional),\n'
-            + '  "chapters": [{"timestamp": number, "title": string, "summary": string?}] (optional)\n'
+            + '  "chapters": [{"timestamp": number, "title": string, "summary": string?}] (optional),\n'
+            + '  "timeline": {\n'
+            + '    "title": string,\n'
+            + '    "lanes": [{"label": string, "segments": [{"start": number, "end": number, "title": string}]}]\n'
+            + '  },\n'
+            + '  "mindmap": {"root": string, "children": [{"label": string, "children": []}]}\n'
             + '}\n\n'
             + 'Rules:\n'
-            + '- Your "content" MUST be markdown.\n'
+            + '- "content" MUST be markdown and MUST NOT include mermaid code blocks (the app will generate diagrams).\n'
             + '- When referencing facts, include timestamps like [MM:SS].\n'
-            + '- Include TWO mermaid diagrams inside the markdown as fenced code blocks:\n'
-            + '  1) Narrative Timeline (time-driven) as a flowchart (NOT gantt). Start with: flowchart LR\n'
-            + '  2) Logic Mind Map (logic-driven). Start with: mindmap\n'
-            + '- Keep mermaid syntax simple and robust. Avoid exotic characters in node IDs; put human text in labels.\n\n'
+            + '- "chapters" timestamps are seconds (number) and must be increasing.\n'
+            + '- "timeline" is used to build a gantt-like narrative timeline: use 4 lanes (Concepts / Core Appeal / Case Study / Deep Summary).\n'
+            + '- Each segment needs start/end seconds and end > start. Keep titles short; avoid ":", ",", arrows, and brackets.\n'
+            + '- "mindmap" should be at least 3 levels deep (prefer 4) with 15+ nodes (not too shallow).\n'
+            + '- Do not invent details not present in the transcript.\n\n'
             + 'Input ({{inputType}}):\n\n'
             + '{{input}}\n'
         );
@@ -84,6 +100,15 @@ function createDefaultSettings(): AppSettings {
         workspace: {
             autoSave: true,
             defaultLocation: '/workspace'
+        },
+        player: {
+            ccStyle: {
+                fontSize: 18,
+                x: 0.5,
+                y: 0.85,
+                color: '#ffffff',
+                bgOpacity: 0.35,
+            }
         },
         transcription: {
             engine: 'local_sherpa_onnx',
@@ -1015,6 +1040,7 @@ export class StateService {
 
         const appearanceRaw = (s as any).appearance || {};
         const workspaceRaw = (s as any).workspace || {};
+        const playerRaw = (s as any).player || {};
         const transcriptionRaw = (s as any).transcription || {};
         const aiRaw = (s as any).ai || {};
         const pluginsRaw = (s as any).plugins || {};
@@ -1032,6 +1058,32 @@ export class StateService {
             defaultLocation: typeof workspaceRaw.defaultLocation === 'string' && workspaceRaw.defaultLocation.trim()
                 ? workspaceRaw.defaultLocation
                 : d.workspace.defaultLocation,
+        };
+
+        const ccRaw = (playerRaw as any).ccStyle || {};
+        const ccFontSize = (typeof ccRaw.fontSize === 'number' && Number.isFinite(ccRaw.fontSize))
+            ? Math.max(10, Math.min(72, Math.round(ccRaw.fontSize)))
+            : d.player.ccStyle.fontSize;
+        const ccX = (typeof ccRaw.x === 'number' && Number.isFinite(ccRaw.x))
+            ? Math.max(0.05, Math.min(0.95, ccRaw.x))
+            : d.player.ccStyle.x;
+        const ccY = (typeof ccRaw.y === 'number' && Number.isFinite(ccRaw.y))
+            ? Math.max(0.05, Math.min(0.95, ccRaw.y))
+            : d.player.ccStyle.y;
+        const ccColor = (typeof ccRaw.color === 'string' && ccRaw.color.trim())
+            ? ccRaw.color.trim()
+            : d.player.ccStyle.color;
+        const ccBgOpacity = (typeof ccRaw.bgOpacity === 'number' && Number.isFinite(ccRaw.bgOpacity))
+            ? Math.max(0, Math.min(0.9, ccRaw.bgOpacity))
+            : d.player.ccStyle.bgOpacity;
+        const player: AppSettings['player'] = {
+            ccStyle: {
+                fontSize: ccFontSize,
+                x: ccX,
+                y: ccY,
+                color: ccColor,
+                bgOpacity: ccBgOpacity,
+            }
         };
 
         const allowedAccel = new Set(['auto', 'cpu', 'cuda']);
@@ -1132,6 +1184,16 @@ export class StateService {
             : d.ai.summaryPrompts;
         if (!summaryPrompts.length) summaryPrompts = d.ai.summaryPrompts;
 
+        // Migration: upgrade the built-in default prompt if it looks like the old flowchart-based template.
+        for (const p of summaryPrompts) {
+            if (p.id !== 'sum-default') continue;
+            const tpl = (p.template || '').toString();
+            const looksOld = tpl.includes('flowchart') && tpl.includes('mindmap') && (tpl.includes('不要 gantt') || tpl.toLowerCase().includes('not gantt'));
+            if (looksOld) {
+                p.template = d.ai.summaryPrompts[0]?.template || p.template;
+            }
+        }
+
         let defaultSummaryPromptId = (typeof (aiRaw as any).defaultSummaryPromptId === 'string')
             ? (aiRaw as any).defaultSummaryPromptId
             : d.ai.defaultSummaryPromptId;
@@ -1148,6 +1210,7 @@ export class StateService {
         return {
             appearance,
             workspace,
+            player,
             transcription: {
                 engine: transcriptionEngine,
                 localAccelerator,

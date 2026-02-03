@@ -363,29 +363,192 @@ fn upsert_track(subs: &mut serde_json::Value, track: serde_json::Value) {
 }
 
 fn parse_translation_pairs(raw: &str) -> Result<Vec<(String, String)>, String> {
-  let v = try_parse_json_value(raw).ok_or_else(|| {
+  fn try_parse_translation_json_lenient(text: &str) -> Option<serde_json::Value> {
+    if let Some(v) = try_parse_json_value(text) {
+      return Some(v);
+    }
+
+    let t = text.trim();
+    if t.is_empty() {
+      return None;
+    }
+
+    // Salvage a common truncation pattern: a partial JSON object/array that contains
+    // multiple complete items but is missing closing brackets.
+    let first = t.chars().find(|c| !c.is_whitespace())?;
+    let last_obj_end = t.rfind('}')?;
+    let prefix = t[..=last_obj_end].trim_end();
+
+    if first == '{' {
+      // Most frequent: {"segments":[{...},{...}, ... <truncated>
+      // Close as: <lastCompleteObject>\n]}.
+      if prefix.contains('[') {
+        let cand = format!("{prefix}\n  ]\n}}");
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&cand) {
+          return Some(v);
+        }
+      }
+
+      // Fallback: maybe the outer object is otherwise complete.
+      let cand = format!("{prefix}\n}}");
+      if let Ok(v) = serde_json::from_str::<serde_json::Value>(&cand) {
+        return Some(v);
+      }
+    }
+
+    if first == '[' {
+      let cand = format!("{prefix}\n]");
+      if let Ok(v) = serde_json::from_str::<serde_json::Value>(&cand) {
+        return Some(v);
+      }
+    }
+    None
+  }
+
+  fn parse_translation_pairs_jsonl(raw: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut t = raw.trim().to_string();
+    if t.starts_with("```") {
+      let mut lines = t.lines();
+      let _ = lines.next();
+      let mut body = lines.collect::<Vec<_>>().join("\n");
+      if let Some(idx) = body.rfind("```") {
+        body.truncate(idx);
+      }
+      t = body.trim().to_string();
+    }
+
+    for line in t.lines() {
+      let s = line.trim();
+      if s.is_empty() {
+        continue;
+      }
+      let mut try_parse_line = |cand: &str| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(cand) {
+          if let Some(a) = v.as_array() {
+            if a.len() >= 2 {
+              let id = a.get(0).and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+              let text = a.get(1).and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+              if !id.is_empty() && !text.is_empty() {
+                out.push((id, text));
+              }
+            }
+            return;
+          }
+          let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+          let text = v.get("text")
+            .or_else(|| v.get("translation"))
+            .or_else(|| v.get("translated"))
+            .or_else(|| v.get("translatedText"))
+            .or_else(|| v.get("translated_text"))
+            .or_else(|| v.get("output"))
+            .or_else(|| v.get("result"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+          if !id.is_empty() && !text.is_empty() {
+            out.push((id, text));
+          }
+        }
+      };
+
+      // Accept plain JSON per line, or a substring containing {..}.
+      if s.starts_with('{') || s.starts_with('[') {
+        try_parse_line(s);
+      } else if let (Some(a), Some(b)) = (s.find('{'), s.rfind('}')) {
+        if b > a {
+          try_parse_line(&s[a..=b]);
+        }
+      }
+    }
+    out
+  }
+
+  let Some(v) = try_parse_translation_json_lenient(raw) else {
+    // Fallback: allow JSONL / line-by-line parsing even when the whole text isn't valid JSON.
+    let jsonl = parse_translation_pairs_jsonl(raw);
+    if !jsonl.is_empty() {
+      return Ok(jsonl);
+    }
     let preview = raw.trim().chars().take(400).collect::<String>();
-    format!("translate output missing JSON\nraw (first 400 chars):\n{preview}")
-  })?;
+    return Err(format!("translate output missing JSON\nraw (first 400 chars):\n{preview}"));
+  };
+
+  // Support multiple root structures: array, {segments:[...]}, {translations:[...]}, {results:[...]}, {s:[...]}
   let arr_opt = if v.is_array() {
     v.as_array().cloned()
   } else {
-    v.get("segments").and_then(|x| x.as_array()).cloned()
+    v.get("segments")
+      .or_else(|| v.get("translations"))
+      .or_else(|| v.get("results"))
+      .or_else(|| v.get("s"))
+      .and_then(|x| x.as_array())
+      .cloned()
   };
   let Some(arr) = arr_opt else {
+    let jsonl = parse_translation_pairs_jsonl(raw);
+    if !jsonl.is_empty() {
+      return Ok(jsonl);
+    }
     return Err("translate output missing segments array".to_string());
   };
 
   let mut out: Vec<(String, String)> = Vec::new();
   for it in arr {
+    // Accept either object items or tuple-like arrays.
+    if let Some(a) = it.as_array() {
+      if a.len() >= 2 {
+        let id = a.get(0).and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+        let text = a.get(1).and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+        if !id.is_empty() && !text.is_empty() {
+          out.push((id, text));
+        }
+      }
+      continue;
+    }
+
     let id = it.get("id").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
-    let text = it.get("text").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    // Support multiple text field names.
+    let mut text = it.get("text")
+      .or_else(|| it.get("translation"))
+      .or_else(|| it.get("translated"))
+      .or_else(|| it.get("translatedText"))
+      .or_else(|| it.get("translated_text"))
+      .or_else(|| it.get("output"))
+      .or_else(|| it.get("result"))
+      .and_then(|x| x.as_str())
+      .unwrap_or("")
+      .trim()
+      .to_string();
+
+    // Fallback: pick the first non-empty string field that isn't the id.
+    if text.is_empty() {
+      if let Some(obj) = it.as_object() {
+        for (k, v) in obj {
+          if k == "id" || k == "start" || k == "end" || k == "language" {
+            continue;
+          }
+          if let Some(s) = v.as_str() {
+            let s = s.trim();
+            if !s.is_empty() {
+              text = s.to_string();
+              break;
+            }
+          }
+        }
+      }
+    }
     if id.is_empty() || text.is_empty() {
       continue;
     }
     out.push((id, text));
   }
   if out.is_empty() {
+    let jsonl = parse_translation_pairs_jsonl(raw);
+    if !jsonl.is_empty() {
+      return Ok(jsonl);
+    }
     return Err("translate output had no usable segments".to_string());
   }
   Ok(out)
@@ -396,72 +559,228 @@ async fn translate_subtitle_pairs_with_ai(
   target_lang: &str,
   payload_json: &str,
 ) -> Result<Vec<(String, String)>, String> {
-  let lang = target_lang.trim();
+  let lang = target_lang.trim().to_lowercase();
   let payload = payload_json.trim();
-  if lang.is_empty() {
+  if lang.trim().is_empty() {
     return Err("target_lang is empty".to_string());
   }
   if payload.is_empty() {
     return Err("translate payload is empty".to_string());
   }
 
-  // Multi-step retry with increasingly strict wording.
-  // NOTE: We intentionally do NOT ask for chain-of-thought / analysis.
+  let want_zh = lang.starts_with("zh");
+  let lang_label = if want_zh { "Simplified Chinese" } else { lang.as_str() };
+  let expected_len: usize = serde_json::from_str::<serde_json::Value>(payload)
+    .ok()
+    .and_then(|v| v.as_array().map(|a| a.len()))
+    .unwrap_or(0);
+
+  // Multi-step retry with formats that survive truncation.
+  // 1) JSONL (NDJSON): one JSON object per line
+  // 2) Compact array-of-pairs
+  // 3) Object with segments array
   let prompt1 = format!(
-    "You are a translation engine. Translate each item to {lang}.\n\n\
-STRICT OUTPUT RULES (follow exactly):\n\
-- Output ONLY valid JSON. No markdown, no explanation, no analysis.\n\
-- Keep the same ids.\n\
-- Do NOT add or remove items.\n\
-\n\
-Output schema:\n{{\"segments\":[{{\"id\":string,\"text\":string}}]}}\n\n\
+    "You are a translation engine. Translate each item to {lang_label}.\n\
+Output format: JSONL (one JSON object per line).\n\
+Each line MUST be: {{\"id\":\"...\",\"text\":\"...\"}}\n\
+Rules:\n\
+- Output ONLY JSONL lines. No markdown, no extra text.\n\
+- Keep ids unchanged. Do NOT add/remove items.\n\
+- Translate naturally.\n\n\
 Input JSON array:\n{payload}\n",
-    lang = lang,
+    lang_label = lang_label,
     payload = payload
   );
-
   let prompt2 = format!(
-    "Translate to {lang}. Return ONLY ONE JSON object (no code fences).\n\
-Schema: {{\"segments\":[{{\"id\":string,\"text\":string}}]}}\n\
-Rules: keep ids, same count, no extra keys.\n\n\
+    "Translate to {lang_label}. Output ONLY JSON. No markdown.\n\
+Format: [[\"id\",\"text\"], ...] (array of 2-item arrays).\n\
+Keep ids unchanged. Do NOT add/remove items.\n\n\
 Input:\n{payload}\n",
-    lang = lang,
+    lang_label = lang_label,
     payload = payload
   );
-
   let prompt3 = format!(
-    "Your previous output was invalid. Output ONLY valid JSON (no markdown).\n\
+    "Translate to {lang_label}. Output ONLY JSON object (no markdown).\n\
 Schema: {{\"segments\":[{{\"id\":string,\"text\":string}}]}}\n\
-Return the same number of items with the same ids.\n\n\
+Keep ids unchanged. Do NOT add/remove items.\n\n\
 Input:\n{payload}\n",
+    lang_label = lang_label,
     payload = payload
   );
 
   let prompts = [prompt1, prompt2, prompt3];
   let mut last_err: Option<String> = None;
+  let max_opts: [u32; 4] = [8192, 4096, 2048, 1024];
+
+  async fn retryable<F, Fut>(mut f: F) -> Result<String, String>
+  where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+  {
+    let delays_ms: [u64; 3] = [350, 900, 1700];
+    let mut last: Option<String> = None;
+    for (i, d) in delays_ms.iter().enumerate() {
+      match f().await {
+        Ok(v) => return Ok(v),
+        Err(e) => {
+          let low = e.to_lowercase();
+          let is_retry = low.contains("http 429")
+            || low.contains("rate limit")
+            || low.contains("http 503")
+            || low.contains("http 502")
+            || low.contains("http 504")
+            || low.contains("timeout")
+            || low.contains("temporarily")
+            || low.contains("try again");
+          last = Some(e);
+          if !is_retry || i == delays_ms.len() - 1 {
+            break;
+          }
+          tokio::time::sleep(std::time::Duration::from_millis(*d)).await;
+        }
+      }
+    }
+    Err(last.unwrap_or_else(|| "request failed".to_string()))
+  }
 
   for p in prompts {
     let raw = match ai.provider {
       AiProvider::OpenaiCompatible => {
+        let base = normalize_base_url(&ai.openai.base_url);
+        if base.is_empty() {
+          return Err("openai baseUrl is empty".to_string());
+        }
         let model = ai.openai.chat_model.trim();
+        if model.is_empty() {
+          return Err("openai model is empty".to_string());
+        }
         let messages = vec![
-          serde_json::json!({ "role": "system", "content": "You are a translation engine. Return ONLY JSON." }),
+          serde_json::json!({ "role": "system", "content": format!("You are a translation engine. Translate to {lang_label}. Output ONLY JSON.", lang_label = lang_label) }),
           serde_json::json!({ "role": "user", "content": p }),
         ];
 
-        // Try json_object mode first; fall back to normal if unsupported.
-        match openai_chat_completion_json_object(&ai.openai.base_url, &ai.openai.api_key, model, messages.clone()).await {
-          Ok(v) => v,
-          Err(_) => openai_chat_completion(&ai.openai.base_url, &ai.openai.api_key, model, messages).await?,
+        let mut last_req_err: Option<String> = None;
+        let mut out: Option<String> = None;
+
+        let looks_like_unknown_param = |e: &str| {
+          let s = e.to_lowercase();
+          (s.contains("unknown") || s.contains("unrecognized") || s.contains("unexpected"))
+            && (s.contains("max_tokens") || s.contains("max_completion_tokens"))
+        };
+
+        // Try max_tokens first (widely supported), then max_completion_tokens (newer APIs),
+        // then no token limit field at all for strict gateways.
+        for mt in max_opts {
+          let body = serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "temperature": 0.0,
+            "stream": false,
+            "max_tokens": mt,
+          });
+          let r = retryable(|| openai_chat_completion_with_body(&base, &ai.openai.api_key, body.clone())).await;
+          match r {
+            Ok(s) => {
+              out = Some(s);
+              break;
+            }
+            Err(e) => {
+              if looks_like_unknown_param(&e) {
+                last_req_err = Some(e);
+                break;
+              }
+              last_req_err = Some(e);
+              continue;
+            }
+          }
         }
+
+        if out.is_none() {
+          for mt in max_opts {
+            let body = serde_json::json!({
+              "model": model,
+              "messages": messages,
+              "temperature": 0.0,
+              "stream": false,
+              "max_completion_tokens": mt,
+            });
+          let r = retryable(|| openai_chat_completion_with_body(&base, &ai.openai.api_key, body.clone())).await;
+          match r {
+            Ok(s) => {
+              out = Some(s);
+              break;
+            }
+            Err(e) => {
+                if looks_like_unknown_param(&e) {
+                  last_req_err = Some(e);
+                  break;
+                }
+                last_req_err = Some(e);
+                continue;
+              }
+            }
+          }
+        }
+
+        if out.is_none() {
+          let body = serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "temperature": 0.0,
+            "stream": false,
+          });
+          let r = retryable(|| openai_chat_completion_with_body(&base, &ai.openai.api_key, body.clone())).await;
+          match r {
+            Ok(s) => out = Some(s),
+            Err(e) => last_req_err = Some(e),
+          }
+        }
+
+        out.ok_or_else(|| last_req_err.unwrap_or_else(|| "openai translate request failed".to_string()))?
       }
       AiProvider::Gemini => {
-        gemini_generate_content(&ai.gemini.base_url, &ai.gemini.api_key, &ai.gemini.model, &p).await?
+        retryable(|| {
+          gemini_generate_content_with_config(
+            &ai.gemini.base_url,
+            &ai.gemini.api_key,
+            &ai.gemini.model,
+            &p,
+            Some(8192),
+          )
+        })
+        .await?
       }
     };
 
     match parse_translation_pairs(&raw) {
-      Ok(pairs) => return Ok(pairs),
+      Ok(pairs) => {
+        if pairs.is_empty() {
+          last_err = Some("translate output had no usable segments".to_string());
+          continue;
+        }
+
+        if want_zh && expected_len >= 3 {
+          let mut han_chars = 0usize;
+          for (_id, t) in &pairs {
+            for c in t.chars() {
+              if c >= '\u{4E00}' && c <= '\u{9FFF}' {
+                han_chars += 1;
+              }
+              if han_chars >= 2 {
+                break;
+              }
+            }
+            if han_chars >= 2 {
+              break;
+            }
+          }
+          if han_chars == 0 {
+            last_err = Some("translate output does not look like Chinese".to_string());
+            continue;
+          }
+        }
+        return Ok(pairs);
+      }
       Err(e) => {
         last_err = Some(e);
         continue;
@@ -470,6 +789,122 @@ Input:\n{payload}\n",
   }
 
   Err(last_err.unwrap_or_else(|| "translate failed".to_string()))
+}
+
+fn should_split_translation_error(err: &str) -> bool {
+  let e = err.to_lowercase();
+  e.contains("translate output missing json")
+    || e.contains("missing segments array")
+    || e.contains("had no usable segments")
+    || e.contains("translate output too few items")
+    || e.contains("does not look like chinese")
+    || e.contains("openai response missing content")
+    || e.contains("event-stream returned no content")
+}
+
+async fn translate_ids_with_auto_split(
+  app: &tauri::AppHandle,
+  job_id: &str,
+  media_id: &str,
+  ai: &AiSettings,
+  target_lang: &str,
+  ids: &[String],
+  id_to_meta: &std::collections::HashMap<String, (f64, f64, String)>,
+  out_map: &mut std::collections::HashMap<String, String>,
+  label: &str,
+) -> Option<String> {
+  use std::collections::VecDeque;
+
+  let total = ids.len().max(1);
+  let mut q: VecDeque<(usize, usize)> = VecDeque::new();
+  q.push_back((0, ids.len()));
+  let mut last_err: Option<String> = None;
+  let mut split_count = 0usize;
+  let mut iter_count = 0usize;
+
+  while let Some((start, end)) = q.pop_front() {
+    iter_count += 1;
+    if iter_count > 2048 {
+      break;
+    }
+    if start >= end || start >= ids.len() {
+      continue;
+    }
+    let end = end.min(ids.len());
+
+    // Build payload for ids not yet translated.
+    let mut list: Vec<serde_json::Value> = Vec::new();
+    let mut pending_count = 0usize;
+    for id in &ids[start..end] {
+      if out_map.contains_key(id) {
+        continue;
+      }
+      if let Some((_s, _e, text)) = id_to_meta.get(id) {
+        pending_count += 1;
+        list.push(serde_json::json!({ "id": id, "text": text }));
+      }
+    }
+    if list.is_empty() {
+      continue;
+    }
+
+    let done = out_map.len().min(total);
+    let prog = ((done as f32) / (total as f32)).clamp(0.0, 0.95);
+    let _ = emit_job(app, JobProgressEvent {
+      job_id: job_id.to_string(),
+      media_id: media_id.to_string(),
+      job_type: JobType::Subtitle,
+      status: JobStatus::Running,
+      progress: (0.10 + 0.80 * prog).clamp(0.0, 0.95),
+      message: Some(format!("{label} {done}/{total}")),
+    });
+
+    let payload = serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string());
+    match translate_subtitle_pairs_with_ai(ai, target_lang, &payload).await {
+      Ok(pairs) => {
+        for (id, text) in pairs {
+          out_map.insert(id, text);
+        }
+
+        // If we didn't translate everything in this range (e.g. truncated output),
+        // keep splitting the remaining portion until done.
+        let mut remaining = 0usize;
+        for id in &ids[start..end] {
+          if out_map.contains_key(id) {
+            continue;
+          }
+          if id_to_meta.contains_key(id) {
+            remaining += 1;
+          }
+        }
+        if remaining > 0 && pending_count > 1 && split_count < 512 {
+          split_count += 1;
+          let mid = start + (end - start) / 2;
+          if mid > start && mid < end {
+            q.push_front((mid, end));
+            q.push_front((start, mid));
+          }
+        }
+      }
+      Err(e) => {
+        last_err = Some(e.clone());
+
+        // If the model output is truncated / malformed, split and retry.
+        if pending_count > 1 && should_split_translation_error(&e) && split_count < 512 {
+          split_count += 1;
+          let mid = start + (end - start) / 2;
+          if mid > start && mid < end {
+            // Process smaller parts first.
+            q.push_front((mid, end));
+            q.push_front((start, mid));
+            continue;
+          }
+        }
+      }
+    }
+  }
+
+  last_err
 }
 
 async fn load_subtitles_json(media_dir: &Path) -> Option<serde_json::Value> {
@@ -620,120 +1055,146 @@ async fn translate_subtitles(
     return Err("original track has no usable segments".to_string());
   }
 
-  // Prefer one request; fall back to chunking if it fails.
-  let total_chars: usize = id_order
-    .iter()
-    .filter_map(|id| id_to_meta.get(id))
-    .map(|(_, _, t)| t.len())
-    .sum();
-
   let mut out_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-  let mut translated_pairs_total: usize = 0;
+  let concurrency = 4usize;
+  let strategy = format!("parallel_auto_split:c{}", concurrency);
+  let mut last_translate_err: Option<String> = None;
 
-  // 1) Try a single request with the full list.
+  // Parallel translation with auto-splitting (robust to output truncation).
   {
+    use futures_util::stream::{FuturesUnordered, StreamExt};
+
+    let max_items = 140usize;
+    let max_chars = 14_000usize;
+    let mut chunks: Vec<Vec<String>> = Vec::new();
+    let mut cur: Vec<String> = Vec::new();
+    let mut cur_chars = 0usize;
+    for id in &id_order {
+      let Some((_s, _e, text)) = id_to_meta.get(id) else { continue; };
+      let add = text.len().saturating_add(32);
+      if !cur.is_empty() && (cur.len() >= max_items || cur_chars.saturating_add(add) > max_chars) {
+        chunks.push(cur);
+        cur = Vec::new();
+        cur_chars = 0;
+      }
+      cur.push(id.clone());
+      cur_chars = cur_chars.saturating_add(add);
+    }
+    if !cur.is_empty() {
+      chunks.push(cur);
+    }
+
+    let total_chunks = chunks.len().max(1);
     let _ = emit_job(&app, JobProgressEvent {
       job_id: job_id.clone(),
       media_id: media_id.clone(),
       job_type: JobType::Subtitle,
       status: JobStatus::Running,
       progress: 0.05,
-      message: Some("translating 1/1".to_string()),
+      message: Some(format!("translating (chunks={})", total_chunks)),
     });
 
-    let mut list: Vec<serde_json::Value> = Vec::with_capacity(id_order.len());
-    for id in &id_order {
-      if let Some((_s, _e, text)) = id_to_meta.get(id) {
-        list.push(serde_json::json!({ "id": id, "text": text }));
-      }
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let meta = std::sync::Arc::new(id_to_meta.clone());
+    let ai2 = args.ai.clone();
+    let tl = target_lang.clone();
+
+    let mut futs: FuturesUnordered<_> = FuturesUnordered::new();
+    for (i, ids_chunk) in chunks.into_iter().enumerate() {
+      let sem = sem.clone();
+      let app2 = app.clone();
+      let job_id2 = job_id.clone();
+      let media_id2 = media_id.clone();
+      let ai3 = ai2.clone();
+      let tl2 = tl.clone();
+      let meta2 = meta.clone();
+      let label = format!("chunk {}/{}", i + 1, total_chunks);
+      futs.push(async move {
+        let _permit = sem.acquire_owned().await.map_err(|e| e.to_string())?;
+        let mut local: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let err = translate_ids_with_auto_split(
+          &app2,
+          &job_id2,
+          &media_id2,
+          &ai3,
+          &tl2,
+          &ids_chunk,
+          &meta2,
+          &mut local,
+          &label,
+        )
+        .await;
+        Ok::<_, String>((local, err))
+      });
     }
 
-    let payload = serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string());
-    if let Ok(pairs) = translate_subtitle_pairs_with_ai(&args.ai, &target_lang, &payload).await {
-      let denom = list.len().max(1) as f32;
-      let coverage = (pairs.len() as f32) / denom;
-      if coverage < 0.70 {
-        // If the model returned too few items, don't accept partial results;
-        // fall back to chunking for stability.
-        out_map.clear();
-        translated_pairs_total = 0;
-        let _ = emit_job(&app, JobProgressEvent {
-          job_id: job_id.clone(),
-          media_id: media_id.clone(),
-          job_type: JobType::Subtitle,
-          status: JobStatus::Running,
-          progress: 0.08,
-          message: Some("single-pass output incomplete; falling back to chunks".to_string()),
-        });
-      } else {
-        translated_pairs_total += pairs.len();
-        for (id, text) in pairs {
-          out_map.insert(id, text);
+    while let Some(res) = futs.next().await {
+      match res {
+        Ok((m, err)) => {
+          for (k, v) in m {
+            out_map.insert(k, v);
+          }
+          if err.is_some() {
+            last_translate_err = err;
+          }
+        }
+        Err(e) => {
+          last_translate_err = Some(e);
         }
       }
     }
   }
 
-  // 2) If nothing translated, fall back to chunking.
-  if translated_pairs_total == 0 {
-    let chunk_segments: usize = if total_chars <= 70_000 {
-      // Still large, but try fewer chunks than before.
-      260
-    } else if total_chars <= 120_000 {
-      180
-    } else {
-      120
-    };
-
-    let total_chunks = (id_order.len() + chunk_segments - 1) / chunk_segments;
-    if total_chunks == 0 {
-      return Err("no subtitle segments".to_string());
-    }
-
-    for (chunk_idx, chunk) in id_order.chunks(chunk_segments).enumerate() {
+  // 3) Repair pass: translate any missing ids (best-effort, also auto-split).
+  {
+    let missing_ids: Vec<String> = id_order
+      .iter()
+      .filter(|id| !out_map.contains_key(*id))
+      .cloned()
+      .collect();
+    let total = id_order.len().max(1);
+    let missing_count = missing_ids.len();
+    if missing_count > 0 {
       let _ = emit_job(&app, JobProgressEvent {
         job_id: job_id.clone(),
         media_id: media_id.clone(),
         job_type: JobType::Subtitle,
         status: JobStatus::Running,
-        progress: (chunk_idx as f32 / total_chunks.max(1) as f32).clamp(0.0, 0.95),
-        message: Some(format!("translating {}/{}", chunk_idx + 1, total_chunks)),
+        progress: 0.92,
+        message: Some(format!("repairing missing translations ({}/{})", missing_count, total)),
       });
 
-      let mut list: Vec<serde_json::Value> = Vec::with_capacity(chunk.len());
-      for id in chunk {
-        if let Some((_s, _e, text)) = id_to_meta.get(id) {
-          list.push(serde_json::json!({ "id": id, "text": text }));
-        }
-      }
-
-      let payload = serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string());
-      match translate_subtitle_pairs_with_ai(&args.ai, &target_lang, &payload).await {
-        Ok(pairs) => {
-          translated_pairs_total += pairs.len();
-          for (id, text) in pairs {
-            out_map.insert(id, text);
-          }
-        }
-        Err(e) => {
-          let first = e.lines().next().unwrap_or("translate failed");
-          let preview = first.chars().take(140).collect::<String>();
-          let _ = emit_job(&app, JobProgressEvent {
-            job_id: job_id.clone(),
-            media_id: media_id.clone(),
-            job_type: JobType::Subtitle,
-            status: JobStatus::Running,
-            progress: (chunk_idx as f32 / total_chunks.max(1) as f32).clamp(0.0, 0.95),
-            message: Some(format!("chunk {}/{} failed: {}", chunk_idx + 1, total_chunks, preview)),
-          });
-          continue;
-        }
+      let err = translate_ids_with_auto_split(
+        &app,
+        &job_id,
+        &media_id,
+        &args.ai,
+        &target_lang,
+        &missing_ids,
+        &id_to_meta,
+        &mut out_map,
+        "repairing",
+      )
+      .await;
+      if err.is_some() {
+        last_translate_err = err;
       }
     }
   }
 
-  if translated_pairs_total == 0 {
-    return Err("translation produced no segments".to_string());
+  let total = id_order.len().max(1);
+  let translated_unique = out_map.len();
+  if translated_unique == 0 {
+    let hint = last_translate_err
+      .as_deref()
+      .map(|s| s.trim())
+      .filter(|s| !s.is_empty())
+      .map(|s| {
+        let preview = s.chars().take(380).collect::<String>();
+        preview
+      })
+      .unwrap_or_else(|| "unknown error".to_string());
+    return Err(format!("translation produced no segments\n\nlast error (first 380 chars):\n{hint}"));
   }
 
   // Build translated track.
@@ -787,6 +1248,17 @@ async fn translate_subtitles(
   );
 
   subs["generatedAt"] = serde_json::Value::String(now_iso());
+
+  // Add translation metadata for UI (coverage reporting).
+  let coverage = (translated_unique as f64) / (total as f64);
+  subs["translation"] = serde_json::json!({
+    "targetLang": target_lang,
+    "strategy": strategy,
+    "totalSegments": total,
+    "translatedSegments": translated_unique,
+    "coverage": coverage,
+    "generatedAt": now_iso(),
+  });
 
   write_json_atomic(&subtitles_file_path(&media_dir), &subs)?;
   Ok(subs)
@@ -1494,6 +1966,8 @@ struct SummarizeMediaArgs {
   prompt_id: Option<String>,
   #[serde(default)]
   prompt_template: Option<String>,
+  #[serde(default)]
+  user_lang: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1938,6 +2412,7 @@ async fn summarize_media(
       &transcription,
       &job_id,
       &app,
+      args.user_lang.as_deref(),
       args.prompt_id.as_deref(),
       args.prompt_template.as_deref(),
     )
@@ -2451,14 +2926,31 @@ async fn chat_media(
     return Err("media not found".to_string());
   }
 
+  // Fallback: some older states may have summary/transcription persisted in state.json
+  // but not written to per-media files.
+  let media_item: Option<serde_json::Value> = try_load_json(&state_file_path(dir)).await.and_then(|s| {
+    s.get("data")
+      .and_then(|d| d.get("mediaItems"))
+      .and_then(|v| v.as_array())
+      .and_then(|arr| {
+        arr.iter()
+          .find(|it| it.get("id").and_then(|v| v.as_str()) == Some(&media_id))
+          .cloned()
+      })
+  });
+
   let transcription_path = media_dir.join("transcription.json");
-  let transcription = if args.include_transcription && transcription_path.is_file() {
-    serde_json::from_slice::<serde_json::Value>(
-      &tokio::fs::read(&transcription_path)
-        .await
-        .map_err(|e| format!("read transcription failed: {e}"))?,
-    )
-    .ok()
+  let transcription = if args.include_transcription {
+    if transcription_path.is_file() {
+      serde_json::from_slice::<serde_json::Value>(
+        &tokio::fs::read(&transcription_path)
+          .await
+          .map_err(|e| format!("read transcription failed: {e}"))?,
+      )
+      .ok()
+    } else {
+      media_item.as_ref().and_then(|m| m.get("transcription").cloned())
+    }
   } else {
     None
   };
@@ -2476,11 +2968,19 @@ async fn chat_media(
         None
       }
     } else {
-      None
+      media_item
+        .as_ref()
+        .and_then(|m| m.get("summary"))
+        .and_then(|s| s.get("content"))
+        .and_then(|c| c.as_str())
+        .map(|s| s.to_string())
     }
   } else {
     None
   };
+
+  // Remove mermaid blocks from summary to reduce noise for chat.
+  let summary_md = summary_md.map(|s| strip_mermaid_code_blocks(&s));
 
   let reply = chat_with_media_context(
     &media_id,
@@ -6335,6 +6835,85 @@ async fn gemini_generate_content(base_url: &str, api_key: &str, model: &str, pro
   Ok(out)
 }
 
+async fn gemini_generate_content_with_config(
+  base_url: &str,
+  api_key: &str,
+  model: &str,
+  prompt: &str,
+  max_output_tokens: Option<u32>,
+) -> Result<String, String> {
+  let mut base = normalize_base_url(base_url);
+  if base.is_empty() {
+    base = "https://generativelanguage.googleapis.com".to_string();
+  }
+  if api_key.trim().is_empty() {
+    return Err("gemini apiKey is empty".to_string());
+  }
+  if model.trim().is_empty() {
+    return Err("gemini model is empty".to_string());
+  }
+
+  let base = if base.ends_with("/v1beta") || base.ends_with("/v1") {
+    base
+  } else {
+    format!("{base}/v1beta")
+  };
+
+  let url = format!("{base}/models/{model}:generateContent?key={}", api_key.trim());
+  let mut gen = serde_json::json!({ "temperature": 0.2 });
+  if let Some(m) = max_output_tokens {
+    if m > 0 {
+      gen["maxOutputTokens"] = serde_json::Value::Number(serde_json::Number::from(m));
+    }
+  }
+
+  let body = serde_json::json!({
+    "contents": [
+      { "role": "user", "parts": [ { "text": prompt } ] }
+    ],
+    "generationConfig": gen
+  });
+
+  let client = reqwest::Client::new();
+  let resp = client
+    .post(url)
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| format!("gemini request failed: {e}"))?;
+  let status = resp.status();
+  let text = resp
+    .text()
+    .await
+    .map_err(|e| format!("read gemini response failed: {e}"))?;
+  if !status.is_success() {
+    return Err(format!("gemini request failed: http {status}\n{text}"));
+  }
+  let v = serde_json::from_str::<serde_json::Value>(&text)
+    .map_err(|e| format!("parse gemini json failed: {e}"))?;
+
+  let mut out = String::new();
+  if let Some(parts) = v
+    .get("candidates")
+    .and_then(|c| c.as_array())
+    .and_then(|arr| arr.first())
+    .and_then(|c| c.get("content"))
+    .and_then(|c| c.get("parts"))
+    .and_then(|p| p.as_array())
+  {
+    for p in parts {
+      if let Some(t) = p.get("text").and_then(|t| t.as_str()) {
+        out.push_str(t);
+      }
+    }
+  }
+
+  if out.trim().is_empty() {
+    return Err("gemini response missing text".to_string());
+  }
+  Ok(out)
+}
+
 fn try_parse_json_object(text: &str) -> Option<serde_json::Value> {
   let mut t = text.trim().to_string();
 
@@ -6548,6 +7127,7 @@ async fn summarize_from_transcription(
   transcription: &serde_json::Value,
   job_id: &str,
   app: &tauri::AppHandle,
+  user_lang: Option<&str>,
   prompt_id: Option<&str>,
   prompt_template: Option<&str>,
 ) -> Result<serde_json::Value, String> {
@@ -6570,6 +7150,17 @@ async fn summarize_from_transcription(
     return Err("transcription is empty".to_string());
   }
 
+  let lang_hint = user_lang.unwrap_or("").trim().to_lowercase();
+  let prefer_zh = lang_hint.starts_with("zh");
+  let prefer_en = lang_hint.starts_with("en");
+  let lang_prefix = if prefer_zh {
+    "Output language: Simplified Chinese (zh). Use Chinese even if the transcript is English.\n\n"
+  } else if prefer_en {
+    "Output language: English.\n\n"
+  } else {
+    ""
+  };
+
   const SINGLE_MAX_CHARS: usize = 60_000;
   const CHUNK_MAX_CHARS: usize = 24_000;
   const CHUNK_CONCURRENCY: usize = 2;
@@ -6587,17 +7178,25 @@ async fn summarize_from_transcription(
     let base_prompt = "You are creating the FINAL summary for a media transcript.\n\n\
 Return ONLY JSON (no code fences).\n\
 Schema:\n\
-{\n  \"content\": string (markdown),\n  \"keyPoints\": string[] (optional),\n  \"chapters\": [{\"timestamp\": number, \"title\": string, \"summary\": string?}] (optional)\n}\n\n\
+{\n\
+  \"content\": string (markdown),\n\
+  \"keyPoints\": string[] (optional),\n\
+  \"chapters\": [{\"timestamp\": number, \"title\": string, \"summary\": string?}] (optional),\n\
+  \"timeline\": {\n\
+    \"title\": string,\n\
+    \"lanes\": [{\"label\": string, \"segments\": [{\"start\": number, \"end\": number, \"title\": string}]}]\n\
+  },\n\
+  \"mindmap\": {\"root\": string, \"children\": [{\"label\": string, \"children\": []}]}\n\
+}\n\n\
 Rules:\n\
-- Your \"content\" MUST be markdown.\n\
+- \"content\" MUST be markdown and MUST NOT include mermaid code blocks (the app will generate diagrams).\n\
 - When referencing facts, include timestamps like [MM:SS].\n\
- - Include TWO mermaid diagrams inside the markdown as fenced code blocks:\n\
-   1) Narrative Timeline (time-driven) as a flowchart (NOT gantt). The mermaid code MUST start with: flowchart LR\n\
-   2) Logic Mind Map (logic-driven). The mermaid code MUST start with: mindmap\n\
- - Keep mermaid syntax simple and robust. Avoid exotic characters in node IDs; put human text in labels.\n\n\
+- Chapters timestamps are seconds (number) and must be increasing.\n\
+- Timeline: provide 4 lanes (Concepts / Core Appeal / Case Study / Deep Summary). Each segment needs start/end seconds and end > start.\n\
+- Mindmap: at least 3 levels deep (prefer 4) with 15+ nodes, keep node text short, avoid ':', ',', arrows, and brackets.\n\n\
 Input (transcript):\n\n{{input}}\n";
     let tpl = prompt_template.unwrap_or(base_prompt);
-    let final_prompt = apply_summary_prompt_template(tpl, "transcript", &transcript_text);
+    let final_prompt = format!("{lang_prefix}{}", apply_summary_prompt_template(tpl, "transcript", &transcript_text));
 
     let out = match ai.provider {
       AiProvider::OpenaiCompatible => {
@@ -6610,7 +7209,11 @@ Input (transcript):\n\n{{input}}\n";
           serde_json::json!({ "role": "system", "content": "You output strict JSON." }),
           serde_json::json!({ "role": "user", "content": final_prompt }),
         ];
-        openai_chat_completion(&ai.openai.base_url, &ai.openai.api_key, model, messages).await?
+         // Prefer strict JSON object mode; fall back to normal mode if unsupported.
+         match openai_chat_completion_json_object(&ai.openai.base_url, &ai.openai.api_key, model, messages.clone()).await {
+           Ok(v) => v,
+           Err(_) => openai_chat_completion(&ai.openai.base_url, &ai.openai.api_key, model, messages).await?,
+         }
       }
       AiProvider::Gemini => {
         gemini_generate_content(&ai.gemini.base_url, &ai.gemini.api_key, &ai.gemini.model, &final_prompt).await?
@@ -6639,23 +7242,26 @@ Input (transcript):\n\n{{input}}\n";
 
     let sem = std::sync::Arc::new(Semaphore::new(CHUNK_CONCURRENCY));
     let mut futs: FuturesUnordered<_> = FuturesUnordered::new();
+    let lang_prefix_chunk = lang_prefix.to_string();
 
     for (i, chunk) in chunks.iter().enumerate() {
       let sem = sem.clone();
       let ai2 = ai.clone();
       let chunk2 = chunk.clone();
+      let lp = lang_prefix_chunk.clone();
       futs.push(async move {
         let _permit = sem.acquire_owned().await.map_err(|e| e.to_string())?;
-        let prompt = format!(
+        let prompt_body = format!(
           "You are summarizing a portion of a media transcript.\n\n\
-Return ONLY markdown. Keep it concise but information-dense.\n\
-Include:\n\
-- Key points (bullets)\n\
-- Notable timestamps (when present like [MM:SS])\n\
-- Terms/proper nouns that seem important (as a short list)\n\n\
-Transcript chunk:\n\n{chunk}\n",
+ Return ONLY markdown. Keep it concise but information-dense.\n\
+ Include:\n\
+ - Key points (bullets)\n\
+ - Notable timestamps (when present like [MM:SS])\n\
+ - Terms/proper nouns that seem important (as a short list)\n\n\
+ Transcript chunk:\n\n{chunk}\n",
           chunk = chunk2
         );
+        let prompt = format!("{lp}{prompt_body}");
 
         let out = match ai2.provider {
           AiProvider::OpenaiCompatible => {
@@ -6708,20 +7314,28 @@ Transcript chunk:\n\n{chunk}\n",
     });
 
     let combined = partials.join("\n\n---\n\n");
-    let base_prompt = "You are creating the FINAL summary for a media transcript.\n\n\
+     let base_prompt = "You are creating the FINAL summary for a media transcript.\n\n\
 Return ONLY JSON (no code fences).\n\
 Schema:\n\
-{\n  \"content\": string (markdown),\n  \"keyPoints\": string[] (optional),\n  \"chapters\": [{\"timestamp\": number, \"title\": string, \"summary\": string?}] (optional)\n}\n\n\
+{\n\
+  \"content\": string (markdown),\n\
+  \"keyPoints\": string[] (optional),\n\
+  \"chapters\": [{\"timestamp\": number, \"title\": string, \"summary\": string?}] (optional),\n\
+  \"timeline\": {\n\
+    \"title\": string,\n\
+    \"lanes\": [{\"label\": string, \"segments\": [{\"start\": number, \"end\": number, \"title\": string}]}]\n\
+  },\n\
+  \"mindmap\": {\"root\": string, \"children\": [{\"label\": string, \"children\": []}]}\n\
+}\n\n\
 Rules:\n\
-- Your \"content\" MUST be markdown.\n\
+- \"content\" MUST be markdown and MUST NOT include mermaid code blocks (the app will generate diagrams).\n\
 - When referencing facts, include timestamps like [MM:SS].\n\
- - Include TWO mermaid diagrams inside the markdown as fenced code blocks:\n\
-   1) Narrative Timeline (time-driven) as a flowchart (NOT gantt). The mermaid code MUST start with: flowchart LR\n\
-   2) Logic Mind Map (logic-driven). The mermaid code MUST start with: mindmap\n\
- - Keep mermaid syntax simple and robust. Avoid exotic characters in node IDs; put human text in labels.\n\n\
+- Chapters timestamps are seconds (number) and must be increasing.\n\
+- Timeline: provide 4 lanes (Concepts / Core Appeal / Case Study / Deep Summary). Each segment needs start/end seconds and end > start.\n\
+- Mindmap: at least 3 levels deep (prefer 4) with 15+ nodes, keep node text short, avoid ':', ',', arrows, and brackets.\n\n\
 Input (notes):\n\n{{input}}\n";
-    let tpl = prompt_template.unwrap_or(base_prompt);
-    let final_prompt = apply_summary_prompt_template(tpl, "notes", &combined);
+     let tpl = prompt_template.unwrap_or(base_prompt);
+     let final_prompt = format!("{lang_prefix}{}", apply_summary_prompt_template(tpl, "notes", &combined));
 
     let out = match ai.provider {
       AiProvider::OpenaiCompatible => {
@@ -6734,7 +7348,10 @@ Input (notes):\n\n{{input}}\n";
           serde_json::json!({ "role": "system", "content": "You output strict JSON." }),
           serde_json::json!({ "role": "user", "content": final_prompt }),
         ];
-        openai_chat_completion(&ai.openai.base_url, &ai.openai.api_key, model, messages).await?
+         match openai_chat_completion_json_object(&ai.openai.base_url, &ai.openai.api_key, model, messages.clone()).await {
+           Ok(v) => v,
+           Err(_) => openai_chat_completion(&ai.openai.base_url, &ai.openai.api_key, model, messages).await?,
+         }
       }
       AiProvider::Gemini => {
         gemini_generate_content(&ai.gemini.base_url, &ai.gemini.api_key, &ai.gemini.model, &final_prompt).await?
@@ -6751,12 +7368,24 @@ Input (notes):\n\n{{input}}\n";
 
   let parsed = try_parse_json_object(&final_out);
 
-  let content = parsed
+  let mut content = parsed
     .as_ref()
     .and_then(|v| v.get("content"))
     .and_then(|c| c.as_str())
     .map(|s| s.to_string())
     .unwrap_or_else(|| final_out.clone());
+
+  // If the prompt returned structured timeline/mindmap, generate stable mermaid blocks ourselves.
+  if let Some(p) = parsed.as_ref() {
+    let timeline = p.get("timeline");
+    let mindmap = p.get("mindmap");
+    if timeline.is_some() || mindmap.is_some() {
+      let timeline_mmd = build_summary_timeline_gantt(timeline, prefer_zh);
+      let mindmap_mmd = build_summary_mindmap(mindmap, prefer_zh);
+      content = strip_mermaid_code_blocks(&content);
+      content = append_summary_diagrams(&content, &timeline_mmd, &mindmap_mmd, prefer_zh);
+    }
+  }
 
   let key_points = parsed
     .as_ref()
@@ -6817,6 +7446,294 @@ Input (notes):\n\n{{input}}\n";
   Ok(out)
 }
 
+fn strip_mermaid_code_blocks(markdown: &str) -> String {
+  let mut out = String::new();
+  let mut rest = markdown.to_string();
+  loop {
+    let idx = match rest.find("```mermaid") {
+      Some(i) => i,
+      None => {
+        out.push_str(&rest);
+        break;
+      }
+    };
+    out.push_str(&rest[..idx]);
+
+    // Skip opening fence (```) and everything until the next closing fence.
+    let after_open = &rest[idx + 3..];
+    let Some(end) = after_open.find("```") else {
+      // Unterminated code fence; drop the remainder.
+      break;
+    };
+    rest = after_open[end + 3..].to_string();
+  }
+  out
+}
+
+fn sanitize_mermaid_label(raw: &str) -> String {
+  let mut s = raw.trim().to_string();
+  if s.is_empty() {
+    return s;
+  }
+  // Keep Mermaid parsers happy: avoid delimiter punctuation.
+  s = s
+    .replace("```", "")
+    .replace('`', "")
+    .replace("\r", " ")
+    .replace("\n", " ")
+    .replace("\t", " ")
+    .replace(':', "：")
+    .replace(',', "，")
+    .replace(';', "；")
+    .replace('(', "（")
+    .replace(')', "）")
+    .replace('[', "【")
+    .replace(']', "】")
+    .replace('<', "")
+    .replace('>', "");
+
+  // Collapse whitespace.
+  let mut out = String::new();
+  let mut last_space = false;
+  for ch in s.chars() {
+    if ch.is_whitespace() {
+      if !last_space {
+        out.push(' ');
+        last_space = true;
+      }
+    } else {
+      out.push(ch);
+      last_space = false;
+    }
+  }
+  out.trim().to_string()
+}
+
+fn seconds_to_gantt_datetime(sec: f64) -> String {
+  let s = if sec.is_finite() && sec > 0.0 { sec } else { 0.0 };
+  let total = s.floor() as i64;
+  let hh = total / 3600;
+  let mm = (total % 3600) / 60;
+  let ss = total % 60;
+  format!("2020-01-01 {hh:02}:{mm:02}:{ss:02}")
+}
+
+fn normalize_lane_key(s: &str) -> String {
+  s.chars()
+    .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
+    .flat_map(|c| c.to_lowercase())
+    .collect::<String>()
+}
+
+fn canonical_summary_timeline_lane_key(label: &str, prefer_zh: bool) -> String {
+  let l = label.trim().to_lowercase();
+  let concept = if prefer_zh { "概念定义" } else { "Concepts" };
+  let core = if prefer_zh { "核心乐趣" } else { "Core Appeal" };
+  let case_study = if prefer_zh { "案例拆解" } else { "Case Study" };
+  let deep = if prefer_zh { "深度总结" } else { "Deep Summary" };
+
+  let is_concept = l.contains("概念")
+    || l.contains("定义")
+    || l.contains("背景")
+    || l.contains("concept")
+    || l.contains("definition")
+    || l.contains("background");
+  if is_concept {
+    return normalize_lane_key(concept);
+  }
+
+  let is_core = l.contains("核心")
+    || l.contains("乐趣")
+    || l.contains("兴趣")
+    || l.contains("core")
+    || l.contains("appeal")
+    || l.contains("fun")
+    || l.contains("why");
+  if is_core {
+    return normalize_lane_key(core);
+  }
+
+  let is_case = l.contains("案例")
+    || l.contains("拆解")
+    || l.contains("对比")
+    || l.contains("case")
+    || l.contains("study")
+    || l.contains("example")
+    || l.contains("comparison");
+  if is_case {
+    return normalize_lane_key(case_study);
+  }
+
+  let is_deep = l.contains("总结")
+    || l.contains("结论")
+    || l.contains("展望")
+    || l.contains("deep")
+    || l.contains("conclusion")
+    || l.contains("takeaway")
+    || l.contains("future");
+  if is_deep {
+    return normalize_lane_key(deep);
+  }
+
+  // Fallback: put unknown lanes into the first lane to avoid losing segments.
+  normalize_lane_key(concept)
+}
+
+fn build_summary_timeline_gantt(timeline: Option<&serde_json::Value>, prefer_zh: bool) -> String {
+  use std::collections::HashMap;
+
+  let title = timeline
+    .and_then(|t| t.get("title"))
+    .and_then(|v| v.as_str())
+    .unwrap_or(if prefer_zh { "视频叙事流程" } else { "Narrative Timeline" });
+
+  let default_lanes: Vec<&str> = if prefer_zh {
+    vec!["概念定义", "核心乐趣", "案例拆解", "深度总结"]
+  } else {
+    vec!["Concepts", "Core Appeal", "Case Study", "Deep Summary"]
+  };
+
+  let mut lane_map: HashMap<String, Vec<(f64, f64, String)>> = HashMap::new();
+  if let Some(lanes) = timeline
+    .and_then(|t| t.get("lanes"))
+    .and_then(|v| v.as_array())
+  {
+    for lane in lanes {
+      let label = lane
+        .get("label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+      if label.is_empty() {
+        continue;
+      }
+      let mut segs_out: Vec<(f64, f64, String)> = Vec::new();
+      if let Some(segs) = lane.get("segments").and_then(|v| v.as_array()) {
+        for seg in segs {
+          let start = seg.get("start").and_then(|n| n.as_f64()).unwrap_or(0.0);
+          let end0 = seg.get("end").and_then(|n| n.as_f64()).unwrap_or(start);
+          let end = if end0 > start { end0 } else { start + 1.0 };
+          let title = seg.get("title").and_then(|s| s.as_str()).unwrap_or("").trim();
+          if title.is_empty() {
+            continue;
+          }
+          segs_out.push((start.max(0.0), end.max(0.0), title.to_string()));
+        }
+      }
+      segs_out.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+      let key = canonical_summary_timeline_lane_key(label, prefer_zh);
+      lane_map.entry(key).or_insert_with(Vec::new).extend(segs_out);
+    }
+  }
+
+  let mut out = String::new();
+  // A stable theme for a clean gantt look.
+  out.push_str("%%{init: {'theme':'base','themeVariables':{'primaryColor':'#6366f1','primaryTextColor':'#ffffff','primaryBorderColor':'#4f46e5','lineColor':'#94a3b8','fontFamily':'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial'}}}%%\n");
+  out.push_str("gantt\n");
+  out.push_str(&format!("  title {}\n", sanitize_mermaid_label(title)));
+  out.push_str("  dateFormat  YYYY-MM-DD HH:mm:ss\n");
+  // Match the screenshot style: show the base date on the axis.
+  out.push_str("  axisFormat  %Y-%m-%d\n");
+  out.push_str("  todayMarker off\n\n");
+
+  let mut task_id = 0usize;
+  for lane_label in &default_lanes {
+    out.push_str(&format!("  section {}\n", sanitize_mermaid_label(lane_label)));
+    let key = normalize_lane_key(lane_label);
+    let segs = lane_map.get(&key).cloned().unwrap_or_default();
+    for (start, end, title) in segs {
+      task_id += 1;
+      let name = sanitize_mermaid_label(&title);
+      if name.is_empty() {
+        continue;
+      }
+      let sdt = seconds_to_gantt_datetime(start);
+      let edt = seconds_to_gantt_datetime(end);
+      out.push_str(&format!("  {} :t{}, {}, {}\n", name, task_id, sdt, edt));
+    }
+    out.push('\n');
+  }
+
+  // Never return an empty gantt (Mermaid may render poorly without tasks).
+  if task_id == 0 {
+    out.push_str(&format!("  section {}\n", sanitize_mermaid_label(if prefer_zh { "概览" } else { "Overview" })));
+    out.push_str("  Start :t1, 2020-01-01 00:00:00, 2020-01-01 00:00:01\n");
+  }
+
+  out
+}
+
+fn build_summary_mindmap_node(out: &mut String, node: &serde_json::Value, depth: usize) {
+  if depth > 6 {
+    return;
+  }
+  let label = if let Some(s) = node.as_str() {
+    s.trim().to_string()
+  } else {
+    node
+      .get("label")
+      .and_then(|v| v.as_str())
+      .unwrap_or("")
+      .trim()
+      .to_string()
+  };
+  if label.is_empty() {
+    return;
+  }
+  let indent = "  ".repeat(depth);
+  out.push_str(&format!("{indent}{}\n", sanitize_mermaid_label(&label)));
+
+  if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
+    for ch in children {
+      build_summary_mindmap_node(out, ch, depth + 1);
+    }
+  }
+}
+
+fn build_summary_mindmap(mindmap: Option<&serde_json::Value>, prefer_zh: bool) -> String {
+  let root = mindmap
+    .and_then(|m| m.get("root"))
+    .and_then(|v| v.as_str())
+    .unwrap_or(if prefer_zh { "逻辑结构" } else { "Logic Map" });
+
+  let mut out = String::new();
+  out.push_str("mindmap\n");
+  out.push_str(&format!("  root(({}))\n", sanitize_mermaid_label(root)));
+
+  if let Some(children) = mindmap
+    .and_then(|m| m.get("children"))
+    .and_then(|v| v.as_array())
+  {
+    for ch in children {
+      build_summary_mindmap_node(&mut out, ch, 2);
+    }
+  }
+
+  // Fallback minimal branches.
+  if out.lines().count() < 4 {
+    if prefer_zh {
+      out.push_str("    主题\n      观点\n      证据\n      结论\n");
+    } else {
+      out.push_str("    Topic\n      Claims\n      Evidence\n      Conclusion\n");
+    }
+  }
+
+  out
+}
+
+fn append_summary_diagrams(content: &str, timeline_mmd: &str, mindmap_mmd: &str, prefer_zh: bool) -> String {
+  let mut out = content.trim().to_string();
+  if !out.is_empty() {
+    out.push_str("\n\n");
+  }
+
+  let (h1, h2) = if prefer_zh { ("视频叙事流程", "逻辑脑图") } else { ("Narrative Timeline", "Logic Mind Map") };
+
+  out.push_str(&format!("## {h1}\n\n```mermaid\n{}\n```\n\n", timeline_mmd.trim()));
+  out.push_str(&format!("## {h2}\n\n```mermaid\n{}\n```\n", mindmap_mmd.trim()));
+  out
+}
+
 fn extract_query_tokens(query: &str) -> Vec<String> {
   fn is_cjk(ch: char) -> bool {
     // Han
@@ -6871,13 +7788,12 @@ fn build_chat_context(transcription: Option<&serde_json::Value>, query: &str) ->
   }
 
   let q = query.trim().to_lowercase();
-  if q.is_empty() {
-    return String::new();
-  }
 
-  let tokens = extract_query_tokens(&q);
+  // Extract tokens for keyword matching
+  let tokens = if !q.is_empty() { extract_query_tokens(&q) } else { Vec::new() };
+
   let mut scored: Vec<(i32, f64, String)> = Vec::new();
-  for seg in segs {
+  for seg in &segs {
     let start = seg.get("start").and_then(|n| n.as_f64()).unwrap_or(0.0);
     let text = seg.get("text").and_then(|t| t.as_str()).unwrap_or("");
     let lower = text.to_lowercase();
@@ -6889,7 +7805,7 @@ fn build_chat_context(transcription: Option<&serde_json::Value>, query: &str) ->
           score += 1;
         }
       }
-    } else if lower.contains(&q) {
+    } else if !q.is_empty() && lower.contains(&q) {
       score = 1;
     }
 
@@ -6899,18 +7815,32 @@ fn build_chat_context(transcription: Option<&serde_json::Value>, query: &str) ->
     scored.push((score, start, text.trim().to_string()));
   }
 
+  // If no keyword matches, provide uniformly sampled context from the entire transcription
+  if scored.is_empty() {
+    let step = (segs.len() / 40).max(1);
+    for (i, seg) in segs.iter().enumerate() {
+      if i % step == 0 {
+        let start = seg.get("start").and_then(|n| n.as_f64()).unwrap_or(0.0);
+        let text = seg.get("text").and_then(|t| t.as_str()).unwrap_or("");
+        if !text.trim().is_empty() {
+          scored.push((0, start, text.trim().to_string()));
+        }
+      }
+    }
+  }
+
   if scored.is_empty() {
     return String::new();
   }
 
   scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)));
-  scored.truncate(28);
+  scored.truncate(40); // Increased from 28 to 40
   scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
   let mut out = String::new();
   for (_score, start, text) in scored {
     let line = format!("[{}] {}\n", seconds_to_timestamp(start), text);
-    if out.len() + line.len() > 12_000 {
+    if out.len() + line.len() > 20_000 { // Increased from 12KB to 20KB
       break;
     }
     out.push_str(&line);

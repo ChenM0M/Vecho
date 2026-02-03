@@ -280,6 +280,15 @@ export interface AppSettings {
         autoSave: boolean;
         defaultLocation: string;
     };
+    player: {
+        ccStyle: {
+            fontSize: number;
+            x: number;
+            y: number;
+            color: string;
+            bgOpacity: number;
+        };
+    };
     transcription: {
         /** Local (sherpa-onnx + SenseVoice) or cloud (OpenAI-compatible) */
         engine: 'local_sherpa_onnx' | 'local_whisper_cpp' | 'openai_compatible';

@@ -18,10 +18,10 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
 
 @Component({
-   selector: 'app-media-detail',
-   standalone: true,
-   imports: [IconComponent, RouterLink, FormsModule, MarkdownRendererComponent, VditorNoteEditorComponent],
-   template: `
+  selector: 'app-media-detail',
+  standalone: true,
+  imports: [IconComponent, RouterLink, FormsModule, MarkdownRendererComponent, VditorNoteEditorComponent],
+  template: `
     <div class="flex flex-col h-full bg-white dark:bg-[#09090b] transition-colors duration-300">
       
       @if (media(); as m) {
@@ -289,27 +289,37 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
 
                       @if (ccDisplayText(); as cc) {
                         <div
-                          class="absolute px-4 select-none"
-                          [ngStyle]="ccOverlayStyle()"
-                          [style.pointerEvents]="ccSettingsOpen() ? 'auto' : 'none'"
-                          style="left: var(--cc-x); top: var(--cc-y); transform: translate(-50%, -50%);"
+                          class="vecho-cc-container absolute left-0 right-0 flex justify-center px-6 select-none z-20 transition-all duration-150"
+                          [class.pointer-events-none]="!ccEnabled()"
+                          [class.pointer-events-auto]="ccEnabled()"
+                          [style.bottom.%]="ccBottomPercent()"
+                          data-cc-subtitle
+                          (wheel)="onCcWheel($event)"
                         >
                           <div
-                            class="max-w-4xl text-center font-medium drop-shadow-[0_2px_10px_rgba(0,0,0,0.65)] backdrop-blur-sm rounded-lg px-4 py-2 relative"
-                            [class.cursor-move]="ccSettingsOpen()"
-                            [style.outline]="ccSettingsOpen() ? '2px dashed rgba(255,255,255,0.35)' : null"
-                            [style.outlineOffset.px]="ccSettingsOpen() ? 2 : null"
-                            style="font-size: var(--cc-font-size); color: var(--cc-color); background-color: rgba(0,0,0,var(--cc-bg));"
+                            class="vecho-cc-box relative max-w-[85%] text-center font-semibold leading-relaxed rounded-lg px-5 py-2.5 group/cc"
+                            [class.cursor-move]="ccEnabled()"
+                            [class.ring-2]="ccSettingsOpen()"
+                            [class.ring-white/40]="ccSettingsOpen()"
+                            [class.ring-dashed]="ccSettingsOpen()"
+                            [style.fontSize.px]="ccStyle().fontSize || 20"
+                            [style.color]="ccStyle().color || '#ffffff'"
+                            [style.backgroundColor]="ccBgColor()"
+                            [style.textShadow]="ccTextShadow()"
+                            [style.backdropFilter]="ccStyle().bgOpacity > 0.1 ? 'blur(8px)' : 'none'"
                             (mousedown)="ccDragStart($event)"
                           >
                             <span class="whitespace-pre-line">{{ cc }}</span>
-                            @if (ccSettingsOpen()) {
-                              <div
-                                class="absolute -bottom-2 -right-2 w-5 h-5 rounded bg-white/20 border border-white/30 cursor-nwse-resize"
-                                title="拖动缩放"
-                                (mousedown)="ccResizeStart($event)"
-                              ></div>
-                            }
+                            <div
+                              class="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-sm bg-white/30 border border-white/50 cursor-nwse-resize opacity-0 group-hover/cc:opacity-100 transition-opacity flex items-center justify-center"
+                              [class.opacity-100]="ccSettingsOpen()"
+                              title="拖动调整字体大小"
+                              (mousedown)="ccResizeStart($event)"
+                            >
+                              <svg class="w-2.5 h-2.5 text-white/80" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M9 1L1 9M6 1h3v3M4 9H1V6"/>
+                              </svg>
+                            </div>
                           </div>
                         </div>
                       }
@@ -390,71 +400,200 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
 
                     @if (ccMenuOpen()) {
                       <div class="absolute bottom-[90px] right-6 z-30" (click)="$event.stopPropagation()">
-                        <div class="w-56 rounded-lg border border-white/10 bg-black/70 backdrop-blur-md shadow-2xl overflow-hidden">
-                          <button class="w-full text-left px-3 py-2 text-[12px] font-semibold text-white/90 hover:bg-white/10" (click)="setCcTrack('off', $event)">关闭字幕</button>
-                          <div class="h-px bg-white/10"></div>
-                          @for (tr of availableSubtitleTracks(); track tr.id) {
+                        <div class="w-64 rounded-xl border border-white/15 bg-black/80 backdrop-blur-xl shadow-2xl overflow-hidden">
+                          <!-- 标题栏 -->
+                          <div class="px-4 py-3 border-b border-white/10">
+                            <div class="text-[13px] font-bold text-white/90 tracking-wide">字幕 / CC</div>
+                          </div>
+
+                          <!-- 轨道列表 -->
+                          <div class="py-1.5">
                             <button
-                              class="w-full text-left px-3 py-2 text-[12px] text-white/90 hover:bg-white/10 flex items-center justify-between"
-                              (click)="setCcTrack(tr.id, $event)"
+                              class="w-full text-left px-4 py-2.5 text-[13px] text-white/85 hover:bg-white/10 flex items-center gap-3 transition-colors"
+                              [class.bg-white/5]="!ccEnabled()"
+                              (click)="setCcTrack('off', $event)"
                             >
-                              <span class="truncate">{{ tr.label || tr.id }}</span>
-                              @if (subtitleTrackId() === tr.id && ccEnabled()) {
-                                <span class="text-[10px] font-black tracking-wider text-white/70">ON</span>
-                              }
+                              <span class="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0"
+                                    [class.border-white/60]="!ccEnabled()"
+                                    [class.border-white/25]="ccEnabled()">
+                                @if (!ccEnabled()) {
+                                  <span class="w-2.5 h-2.5 bg-white/80 rounded-full"></span>
+                                }
+                              </span>
+                              <span class="font-medium">关闭</span>
                             </button>
-                          }
-                          <div class="h-px bg-white/10"></div>
-                          <button class="w-full text-left px-3 py-2 text-[12px] text-white/90 hover:bg-white/10" (click)="ccSettingsOpen.set(true); ccMenuOpen.set(false)">字幕样式…</button>
-                          <button class="w-full text-left px-3 py-2 text-[12px] text-white/90 hover:bg-white/10" (click)="translateSubtitlesToZh(); ccMenuOpen.set(false)">一键翻译中文</button>
+
+                            @for (tr of availableSubtitleTracks(); track tr.id) {
+                              <button
+                                class="w-full text-left px-4 py-2.5 text-[13px] text-white/85 hover:bg-white/10 flex items-center gap-3 transition-colors"
+                                [class.bg-white/5]="subtitleTrackId() === tr.id && ccEnabled()"
+                                (click)="setCcTrack(tr.id, $event)"
+                              >
+                                <span class="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0"
+                                      [class.border-white/60]="subtitleTrackId() === tr.id && ccEnabled()"
+                                      [class.border-white/25]="!(subtitleTrackId() === tr.id && ccEnabled())">
+                                  @if (subtitleTrackId() === tr.id && ccEnabled()) {
+                                    <span class="w-2.5 h-2.5 bg-white/80 rounded-full"></span>
+                                  }
+                                </span>
+                                <span class="truncate font-medium">{{ tr.label || tr.id }}</span>
+                                @if (tr.id.includes('zh') || tr.label?.includes('中')) {
+                                  <span class="ml-auto text-[10px] font-bold text-blue-400/80 bg-blue-500/15 px-1.5 py-0.5 rounded">中文</span>
+                                }
+                              </button>
+                            }
+                          </div>
+
+                          <!-- 操作按钮 -->
+                          <div class="border-t border-white/10 py-1.5">
+                            <button
+                              class="w-full text-left px-4 py-2.5 text-[13px] text-white/85 hover:bg-white/10 flex items-center gap-3 transition-colors"
+                              (click)="ccSettingsOpen.set(true); ccMenuOpen.set(false)"
+                            >
+                              <app-icon name="settings" [size]="16" class="opacity-60"></app-icon>
+                              <span>字幕样式设置</span>
+                            </button>
+                            <button
+                              class="w-full text-left px-4 py-2.5 text-[13px] text-white/85 hover:bg-white/10 flex items-center gap-3 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              [disabled]="translatingSubtitles()"
+                              (click)="translateSubtitlesToZh(); ccMenuOpen.set(false)"
+                            >
+                              <app-icon name="languages" [size]="16" class="opacity-60"></app-icon>
+                              <span>{{ translatingSubtitles() ? '翻译中…' : '一键AI翻译中文' }}</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     }
 
                     @if (ccSettingsOpen()) {
-                      <div class="absolute inset-0 z-40 pointer-events-none">
-                        <div class="absolute inset-0 bg-black/30"></div>
-                        <div class="absolute right-6 bottom-[90px] w-80 rounded-xl border border-white/10 bg-black/75 backdrop-blur-md shadow-2xl p-4 pointer-events-auto">
-                          <div class="flex items-center justify-between">
-                            <div class="text-sm font-bold text-white/90">字幕样式（可在画面中拖动/缩放）</div>
-                            <button class="p-1 rounded hover:bg-white/10 text-white/70" (click)="ccSettingsOpen.set(false)"><app-icon name="x" [size]="14"></app-icon></button>
+                      <div class="absolute inset-0 z-40" (click)="ccSettingsOpen.set(false)">
+                        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
+                        <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[360px] rounded-2xl border border-white/15 bg-zinc-900/95 backdrop-blur-xl shadow-2xl overflow-hidden pointer-events-auto" (click)="$event.stopPropagation()">
+                          <!-- 头部 -->
+                          <div class="px-5 py-4 border-b border-white/10 flex items-center justify-between">
+                            <div>
+                              <div class="text-[15px] font-bold text-white">字幕样式</div>
+                              <div class="text-[11px] text-white/50 mt-0.5">可在播放画面中直接拖动字幕调整位置</div>
+                            </div>
+                            <button class="w-8 h-8 rounded-lg hover:bg-white/10 text-white/60 hover:text-white/90 flex items-center justify-center transition-colors" (click)="ccSettingsOpen.set(false)">
+                              <app-icon name="x" [size]="18"></app-icon>
+                            </button>
                           </div>
 
-                          <div class="mt-3 space-y-3 text-white/80">
+                          <div class="p-5 space-y-5">
+                            <!-- 预设样式 -->
                             <div>
-                              <div class="flex items-center justify-between text-[11px] font-semibold"><span>字体大小</span><span class="font-mono">{{ ccStyle().fontSize }}px</span></div>
-                              <input type="range" min="12" max="72" [ngModel]="ccStyle().fontSize" (ngModelChange)="ccStyle.set({ ...ccStyle(), fontSize: +$event })" class="w-full" />
-                            </div>
-
-                            <div class="grid grid-cols-2 gap-3">
-                              <div>
-                                <div class="flex items-center justify-between text-[11px] font-semibold"><span>水平位置</span><span class="font-mono">{{ Math.round((ccStyle().x || 0.5) * 100) }}%</span></div>
-                                <input type="range" min="5" max="95" [ngModel]="Math.round((ccStyle().x || 0.5) * 100)" (ngModelChange)="ccStyle.set({ ...ccStyle(), x: (+$event) / 100 })" class="w-full" />
-                              </div>
-                              <div>
-                                <div class="flex items-center justify-between text-[11px] font-semibold"><span>垂直位置</span><span class="font-mono">{{ Math.round((ccStyle().y || 0.85) * 100) }}%</span></div>
-                                <input type="range" min="5" max="95" [ngModel]="Math.round((ccStyle().y || 0.85) * 100)" (ngModelChange)="ccStyle.set({ ...ccStyle(), y: (+$event) / 100 })" class="w-full" />
-                              </div>
-                            </div>
-
-                            <div>
-                              <div class="flex items-center justify-between text-[11px] font-semibold"><span>背景透明</span><span class="font-mono">{{ ccStyle().bgOpacity }}</span></div>
-                              <input type="range" min="0" max="0.85" step="0.05" [ngModel]="ccStyle().bgOpacity" (ngModelChange)="ccStyle.set({ ...ccStyle(), bgOpacity: +$event })" class="w-full" />
-                            </div>
-
-                            <div>
-                              <div class="flex items-center justify-between text-[11px] font-semibold"><span>文字颜色</span></div>
-                              <div class="mt-1 flex items-center gap-2">
-                                <button class="px-2 py-1 rounded bg-white/10 hover:bg-white/15 text-[11px]" (click)="ccStyle.set({ ...ccStyle(), color: '#ffffff' })">白</button>
-                                <button class="px-2 py-1 rounded bg-white/10 hover:bg-white/15 text-[11px]" (click)="ccStyle.set({ ...ccStyle(), color: '#ffe08a' })">黄</button>
-                                <button class="px-2 py-1 rounded bg-white/10 hover:bg-white/15 text-[11px]" (click)="ccStyle.set({ ...ccStyle(), color: '#a7f3d0' })">绿</button>
-                                <input type="color" class="w-9 h-8 bg-transparent" [ngModel]="ccStyle().color" (ngModelChange)="ccStyle.set({ ...ccStyle(), color: $event })" />
+                              <div class="text-[11px] font-semibold text-white/60 uppercase tracking-wider mb-2.5">预设样式</div>
+                              <div class="grid grid-cols-4 gap-2">
+                                <button
+                                  class="h-10 rounded-lg border border-white/15 bg-black/50 hover:bg-white/10 text-white font-semibold text-sm transition-colors"
+                                  (click)="applyCcPreset('white')"
+                                >白字</button>
+                                <button
+                                  class="h-10 rounded-lg border border-white/15 bg-black/50 hover:bg-white/10 text-amber-300 font-semibold text-sm transition-colors"
+                                  (click)="applyCcPreset('yellow')"
+                                >黄字</button>
+                                <button
+                                  class="h-10 rounded-lg border border-white/15 bg-black/50 hover:bg-white/10 text-emerald-300 font-semibold text-sm transition-colors"
+                                  (click)="applyCcPreset('green')"
+                                >绿字</button>
+                                <button
+                                  class="h-10 rounded-lg border border-white/15 bg-black/50 hover:bg-white/10 text-sky-300 font-semibold text-sm transition-colors"
+                                  (click)="applyCcPreset('blue')"
+                                >蓝字</button>
                               </div>
                             </div>
 
-                            <div class="flex items-center justify-end gap-2 pt-1">
-                              <button class="h-8 px-3 rounded-md text-[11px] font-semibold bg-white/10 hover:bg-white/15" (click)="resetCcStyle()">重置</button>
+                            <!-- 字体大小 -->
+                            <div>
+                              <div class="flex items-center justify-between mb-2">
+                                <span class="text-[12px] font-semibold text-white/80">字体大小</span>
+                                <span class="text-[12px] font-mono text-white/60 bg-white/10 px-2 py-0.5 rounded">{{ ccStyle().fontSize || 20 }}px</span>
+                              </div>
+                              <input
+                                type="range" min="14" max="56" step="2"
+                                class="w-full vecho-slider"
+                                [ngModel]="ccStyle().fontSize || 20"
+                                (ngModelChange)="patchCcStyle({ fontSize: +$event })"
+                              />
+                              <div class="flex justify-between text-[10px] text-white/40 mt-1">
+                                <span>小</span>
+                                <span>大</span>
+                              </div>
                             </div>
+
+                            <!-- 垂直位置 -->
+                            <div>
+                              <div class="flex items-center justify-between mb-2">
+                                <span class="text-[12px] font-semibold text-white/80">距底部位置</span>
+                                <span class="text-[12px] font-mono text-white/60 bg-white/10 px-2 py-0.5 rounded">{{ ccBottomDisplayPercent() }}%</span>
+                              </div>
+                              <input
+                                type="range" min="5" max="50" step="1"
+                                class="w-full vecho-slider"
+                                [ngModel]="ccBottomDisplayPercent()"
+                                (ngModelChange)="patchCcStyle({ y: 1 - (+$event) / 100 })"
+                              />
+                              <div class="flex justify-between text-[10px] text-white/40 mt-1">
+                                <span>底部</span>
+                                <span>中间</span>
+                              </div>
+                            </div>
+
+                            <!-- 背景透明度 -->
+                            <div>
+                              <div class="flex items-center justify-between mb-2">
+                                <span class="text-[12px] font-semibold text-white/80">背景透明度</span>
+                                <span class="text-[12px] font-mono text-white/60 bg-white/10 px-2 py-0.5 rounded">{{ ccBgOpacityPercent() }}%</span>
+                              </div>
+                              <input
+                                type="range" min="0" max="80" step="5"
+                                class="w-full vecho-slider"
+                                [ngModel]="ccBgOpacityPercent()"
+                                (ngModelChange)="patchCcStyle({ bgOpacity: (+$event) / 100 })"
+                              />
+                              <div class="flex justify-between text-[10px] text-white/40 mt-1">
+                                <span>透明</span>
+                                <span>不透明</span>
+                              </div>
+                            </div>
+
+                            <!-- 自定义颜色 -->
+                            <div>
+                              <div class="text-[12px] font-semibold text-white/80 mb-2">自定义颜色</div>
+                              <div class="flex items-center gap-3">
+                                <input
+                                  type="color"
+                                  class="w-10 h-10 rounded-lg bg-transparent border-2 border-white/20 cursor-pointer"
+                                  [ngModel]="ccStyle().color || '#ffffff'"
+                                  (ngModelChange)="patchCcStyle({ color: $event })"
+                                />
+                                <input
+                                  type="text"
+                                  class="flex-1 h-10 px-3 rounded-lg bg-white/5 border border-white/15 text-white/80 text-sm font-mono uppercase"
+                                  [ngModel]="ccStyle().color || '#ffffff'"
+                                  (ngModelChange)="patchCcStyle({ color: $event })"
+                                  maxlength="7"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <!-- 底部操作 -->
+                          <div class="px-5 py-4 border-t border-white/10 flex items-center justify-between">
+                            <button
+                              class="h-9 px-4 rounded-lg text-[13px] font-semibold text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+                              (click)="resetCcStyle()"
+                            >
+                              恢复默认
+                            </button>
+                            <button
+                              class="h-9 px-5 rounded-lg text-[13px] font-semibold bg-white text-black hover:bg-white/90 transition-colors"
+                              (click)="ccSettingsOpen.set(false)"
+                            >
+                              完成
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -1117,14 +1256,41 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
                                   ? 'bg-zinc-900 text-white dark:bg-white dark:text-black'
                                   : 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-100'"
                               >
-                                @if (msg.role === 'assistant' && (msg.content || '').length > 700) {
-                                  <div class="flex items-center justify-between mb-1">
-                                    <span class="text-[10px] font-bold text-zinc-500">AI</span>
-                                    <button class="text-[10px] font-semibold text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100" (click)="toggleChatMsgCollapse(msg.id, $event)">
-                                      {{ isChatMsgCollapsed(msg.id) ? '展开' : '收起' }}
-                                    </button>
-                                  </div>
-                                  <app-markdown variant="compact" [content]="isChatMsgCollapsed(msg.id) ? chatMsgPreview(msg.content) : msg.content" [title]="m.name"></app-markdown>
+                                @if (msg.role === 'assistant') {
+                                  @if (chatMsgThought(msg.content)) {
+                                    <div class="flex items-center justify-between mb-1">
+                                      <span class="text-[10px] font-bold text-zinc-500">AI</span>
+                                      <div class="flex items-center gap-3">
+                                        @if ((chatMsgVisible(msg.content) || '').length > 700) {
+                                          <button class="text-[10px] font-semibold text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100" (click)="toggleChatMsgCollapse(msg.id, $event)">
+                                            {{ isChatMsgCollapsed(msg.id) ? '展开回答' : '收起回答' }}
+                                          </button>
+                                        }
+                                        <button class="text-[10px] font-semibold text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100" (click)="toggleChatThought(msg.id, $event)">
+                                          {{ isChatThoughtOpen(msg.id) ? '收起思考' : '展开思考' }}
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <app-markdown variant="compact" [content]="isChatMsgCollapsed(msg.id) ? chatMsgPreview(chatMsgVisible(msg.content)) : chatMsgVisible(msg.content)" [title]="m.name"></app-markdown>
+                                    @if (isChatThoughtOpen(msg.id)) {
+                                      <div class="mt-2 rounded-lg border border-zinc-200/70 dark:border-zinc-800 bg-zinc-50/60 dark:bg-black/20 p-3">
+                                        <div class="text-[10px] font-bold text-zinc-500 mb-1">思考</div>
+                                        <app-markdown variant="compact" [content]="chatMsgThought(msg.content)" [title]="m.name"></app-markdown>
+                                      </div>
+                                    }
+                                  } @else {
+                                    @if ((chatMsgVisible(msg.content) || '').length > 700) {
+                                      <div class="flex items-center justify-between mb-1">
+                                        <span class="text-[10px] font-bold text-zinc-500">AI</span>
+                                        <button class="text-[10px] font-semibold text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100" (click)="toggleChatMsgCollapse(msg.id, $event)">
+                                          {{ isChatMsgCollapsed(msg.id) ? '展开' : '收起' }}
+                                        </button>
+                                      </div>
+                                      <app-markdown variant="compact" [content]="isChatMsgCollapsed(msg.id) ? chatMsgPreview(chatMsgVisible(msg.content)) : chatMsgVisible(msg.content)" [title]="m.name"></app-markdown>
+                                    } @else {
+                                      <app-markdown variant="compact" [content]="chatMsgVisible(msg.content)" [title]="m.name"></app-markdown>
+                                    }
+                                  }
                                 } @else {
                                   <app-markdown variant="compact" [content]="msg.content" [title]="m.name"></app-markdown>
                                 }
@@ -1251,1922 +1417,2091 @@ type TabId = 'transcript' | 'notes' | 'bookmarks' | 'summary' | 'chat';
   `
 })
 export class MediaDetailComponent implements OnInit, OnDestroy {
-    private route = inject(ActivatedRoute);
-    private router = inject(Router);
-    private destroyRef = inject(DestroyRef);
-    public config = inject(ConfigService);
-    public state = inject(StateService);
-    public tauri = inject(TauriService);
-    private backend = inject(BackendService);
-    private toast = inject(ToastService);
-    private confirm = inject(ConfirmService);
-    private sanitizer = inject(DomSanitizer);
+  private route = inject(ActivatedRoute);
+  private router = inject(Router);
+  private destroyRef = inject(DestroyRef);
+  public config = inject(ConfigService);
+  public state = inject(StateService);
+  public tauri = inject(TauriService);
+  private backend = inject(BackendService);
+  private toast = inject(ToastService);
+  private confirm = inject(ConfirmService);
+  private sanitizer = inject(DomSanitizer);
 
-    private formatError(err: unknown): string {
-      if (err instanceof Error) return err.message;
-      if (typeof err === 'string') return err;
-      if (!err) return '未知错误';
-      const anyErr = err as any;
-      if (typeof anyErr?.message === 'string') return anyErr.message;
-      if (typeof anyErr?.error === 'string') return anyErr.error;
-      try {
-        return JSON.stringify(err);
-      } catch {
-        return String(err);
-      }
+  private formatError(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    if (typeof err === 'string') return err;
+    if (!err) return '未知错误';
+    const anyErr = err as any;
+    if (typeof anyErr?.message === 'string') return anyErr.message;
+    if (typeof anyErr?.error === 'string') return anyErr.error;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  }
+
+  private readonly mediaId = signal<string | null>(null);
+
+  media = computed(() => {
+    const id = this.mediaId();
+    if (!id) return null;
+    return this.state.mediaItems().find(m => m.id === id) || null;
+  });
+
+  videoEl = viewChild<ElementRef<HTMLVideoElement>>('videoEl');
+  audioEl = viewChild<ElementRef<HTMLAudioElement>>('audioEl');
+  playerContainer = viewChild<ElementRef<HTMLElement>>('playerContainer');
+  noteEditorBox = viewChild<ElementRef<HTMLElement>>('noteEditorBox');
+
+  playerSrc = signal<SafeResourceUrl | null>(null);
+  playerResolving = signal(false);
+  playerLoading = signal(false);
+  playerError = signal<string | null>(null);
+  isPlaying = signal(false);
+  isMuted = signal(false);
+  domFullscreen = signal(false);
+  windowFullscreen = signal(false);
+  isFullscreen = computed(() => this.domFullscreen() || this.windowFullscreen());
+  pseudoFullscreen = computed(() => this.windowFullscreen() && !this.domFullscreen());
+  isPiP = signal(false);
+  playerControlsVisible = signal(true);
+  private playerControlsHideTimer: any = null;
+  private playerDuration = signal<number | null>(null);
+
+  duration = computed(() => {
+    const d = this.playerDuration();
+    if (typeof d === 'number' && isFinite(d) && d > 0) return d;
+    const m = this.media();
+    return m?.duration || 0;
+  });
+
+  progressPct = computed(() => {
+    const dur = this.duration();
+    if (!dur || dur <= 0) return 0;
+    const pct = (this.currentTime() / dur) * 100;
+    return Math.max(0, Math.min(100, pct));
+  });
+
+  progressRatio = computed(() => this.progressPct() / 100);
+
+  playerHint = computed(() => {
+    const m = this.media();
+    if (!m) return null;
+    if (this.playerError()) return '播放器加载失败（请检查文件是否存在）';
+    if (this.playerResolving()) return '正在准备播放器...';
+    if (this.playerLoading()) return '正在解析媒体...';
+    if (this.playerSrc()) return null;
+    if (!this.tauri.isTauri()) return 'Web 预览模式暂不支持本地播放';
+
+    if (m.source.type === 'online') {
+      return (m.source as any).cachedPath
+        ? null
+        : '此在线资源尚未下载到本地';
     }
 
-    private readonly mediaId = signal<string | null>(null);
+    if (m.source.type === 'local') {
+      return m.source.path ? null : '文件尚未导入到本地';
+    }
 
-    media = computed(() => {
-       const id = this.mediaId();
-       if (!id) return null;
-       return this.state.mediaItems().find(m => m.id === id) || null;
+    return null;
+  });
+
+  activeTab = signal<TabId>('notes');
+  currentTime = signal(0);
+
+  subtitles = signal<SubtitlesFile | null>(null);
+  subtitlesLoading = signal(false);
+  subtitleTrackId = signal<string>('original');
+  ccEnabled = signal(false);
+  ccMenuOpen = signal(false);
+  ccSettingsOpen = signal(false);
+  ccStyle = signal({ ...this.state.settings().player.ccStyle } as any);
+  translatingSubtitles = signal(false);
+
+  subtitleTracks = computed<SubtitleTrack[]>(() => {
+    const subs = this.subtitles();
+    return subs?.tracks || [];
+  });
+
+  private transcriptionAsTrack(m: MediaItem | null): SubtitleTrack | null {
+    if (!m?.transcription?.segments?.length) return null;
+    const segs: SubtitleSegment[] = m.transcription.segments
+      .filter(s => (s.text || '').trim())
+      .map(s => ({
+        id: s.id,
+        start: Number(s.start) || 0,
+        end: Number(s.end) || Number(s.start) || 0,
+        text: (s.text || '').toString(),
+      }));
+    return {
+      id: 'original',
+      label: 'Original',
+      language: m.transcription.language,
+      kind: 'transcription',
+      segments: segs,
+    };
+  }
+
+  availableSubtitleTracks = computed<SubtitleTrack[]>(() => {
+    const subs = this.subtitles();
+    if (subs?.tracks?.length) {
+      return subs.tracks.filter(t => (t.segments || []).length > 0);
+    }
+    const m = this.media();
+    const t = this.transcriptionAsTrack(m);
+    return t ? [t] : [];
+  });
+
+  selectedSubtitleTrack = computed<SubtitleTrack | null>(() => {
+    const id = (this.subtitleTrackId() || '').trim();
+    if (!id) return null;
+    const tracks = this.availableSubtitleTracks();
+    return tracks.find(t => t.id === id) || tracks[0] || null;
+  });
+
+  transcriptSegments = computed<Array<Pick<SubtitleSegment, 'id' | 'start' | 'end' | 'text'>>>(() => {
+    const t = this.selectedSubtitleTrack();
+    if (!t) {
+      const m = this.media();
+      return (m?.transcription?.segments || []).map(s => ({ id: s.id, start: s.start, end: s.end, text: s.text }));
+    }
+    return (t.segments || []).map(s => ({ id: s.id, start: s.start, end: s.end, text: s.text }));
+  });
+
+  activeSubtitleText = computed<string | null>(() => {
+    if (!this.ccEnabled()) return null;
+    const t = this.selectedSubtitleTrack();
+    if (!t) return null;
+    const segs = t.segments || [];
+    if (!segs.length) return null;
+    const cur = Number(this.currentTime()) || 0;
+
+    // Binary search by start time.
+    let lo = 0;
+    let hi = segs.length - 1;
+    let best = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const s = Number(segs[mid].start) || 0;
+      if (s <= cur) {
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (best < 0) return null;
+    const seg = segs[best];
+    const end = Number(seg.end) || Number(seg.start) || 0;
+    if (cur < (Number(seg.start) || 0) || cur >= end) return null;
+    const text = (seg.text || '').toString().trim();
+    return text || null;
+  });
+
+  ccDisplayText = computed<string | null>(() => {
+    const live = this.activeSubtitleText();
+    if (live) return live;
+    if (this.ccSettingsOpen()) return '字幕预览\nDrag / Resize';
+    return null;
+  });
+
+  ccOverlayStyle = computed(() => {
+    const s: any = this.ccStyle();
+    const x = Number(s.x);
+    const y = Number(s.y);
+    return {
+      '--cc-font-size': `${Math.max(10, Math.min(72, Number(s.fontSize) || 18))}px`,
+      '--cc-x': `${Math.max(0.05, Math.min(0.95, isFinite(x) ? x : 0.5)) * 100}%`,
+      '--cc-y': `${Math.max(0.05, Math.min(0.95, isFinite(y) ? y : 0.85)) * 100}%`,
+      '--cc-color': (s.color || '#ffffff'),
+      '--cc-bg': `${Math.max(0, Math.min(0.9, Number(s.bgOpacity) || 0))}`,
+    } as any;
+  });
+
+  // 新增：返回字幕距底部的百分比（用于 bottom 定位）
+  ccBottomPercent = computed(() => {
+    const s: any = this.ccStyle();
+    const y = Number(s.y);
+    // y 存储的是"距顶部的比例"，转换为"距底部的百分比"
+    const bottomRatio = 1 - (isFinite(y) ? y : 0.85);
+    return Math.max(2, Math.min(50, bottomRatio * 100));
+  });
+
+  // 新增：用于设置面板显示的"距底部百分比"
+  ccBottomDisplayPercent = computed(() => {
+    return Math.round(this.ccBottomPercent());
+  });
+
+  // 新增：生成背景色 rgba 字符串
+  ccBgColor = computed(() => {
+    const s: any = this.ccStyle();
+    const opacity = Math.max(0, Math.min(0.9, Number(s.bgOpacity) || 0));
+    return `rgba(0, 0, 0, ${opacity})`;
+  });
+
+  // 新增：生成文字阴影（增强可读性）
+  ccTextShadow = computed(() => {
+    // 多层阴影提供更好的对比度
+    return '0 1px 3px rgba(0,0,0,0.8), 0 2px 8px rgba(0,0,0,0.5), 0 0 20px rgba(0,0,0,0.3)';
+  });
+
+  // 新增：用于设置面板显示的"背景透明度百分比"
+  ccBgOpacityPercent = computed(() => {
+    const s: any = this.ccStyle();
+    return Math.round((Number(s.bgOpacity) || 0) * 100);
+  });
+
+  moreMenuOpen = signal(false);
+
+  exporting = signal(false);
+
+  transcriptionDialogOpen = signal(false);
+  transcriptionDraft = signal<Pick<AppSettings['transcription'], 'language' | 'localAccelerator' | 'numThreads' | 'useItn'>>({
+    language: 'auto',
+    localAccelerator: 'auto',
+    numThreads: 0,
+    useItn: true,
+  });
+
+  patchTranscriptionDraft(patch: Partial<AppSettings['transcription']>): void {
+    this.transcriptionDraft.update((prev) => {
+      const next = { ...prev, ...patch } as any;
+      if (typeof next.numThreads === 'number') {
+        next.numThreads = Math.max(0, Math.min(64, Math.floor(next.numThreads || 0)));
+      }
+      return next;
+    });
+  }
+
+  // Waveform Mock Data
+  waveformBars: { height: number }[] = [];
+  hoverX = 0;
+
+  tabs = [
+    { id: 'notes' as TabId, label: '笔记' },
+    { id: 'bookmarks' as TabId, label: '书签' },
+    { id: 'transcript' as TabId, label: '转写' },
+    { id: 'summary' as TabId, label: 'AI 总结' },
+    { id: 'chat' as TabId, label: 'AI 对话' },
+  ];
+
+  private latestJob(type: ProcessingJob['type']): ProcessingJob | null {
+    const m = this.media();
+    if (!m) return null;
+    return this.state.processingJobs().find(j => j.mediaId === m.id && j.type === type) || null;
+  }
+
+  transcriptionJob = computed(() => this.latestJob('transcription'));
+  optimizeJob = computed(() => this.latestJob('optimize'));
+  summaryJob = computed(() => this.latestJob('summary'));
+  subtitleJob = computed(() => this.latestJob('subtitle'));
+
+  activeJobBanner = computed<ProcessingJob | null>(() => {
+    const m = this.media();
+    if (!m) return null;
+    return this.state.processingJobs().find(j =>
+      j.mediaId === m.id && (j.status === 'pending' || j.status === 'processing')
+    ) || null;
+  });
+
+  transcriptionRunning = computed(() => {
+    const j = this.transcriptionJob();
+    return !!j && (j.status === 'pending' || j.status === 'processing');
+  });
+
+  optimizeRunning = computed(() => {
+    const j = this.optimizeJob();
+    return !!j && (j.status === 'pending' || j.status === 'processing');
+  });
+
+  summaryRunning = computed(() => {
+    const j = this.summaryJob();
+    return !!j && (j.status === 'pending' || j.status === 'processing');
+  });
+
+  subtitleRunning = computed(() => {
+    const j = this.subtitleJob();
+    return !!j && (j.status === 'pending' || j.status === 'processing');
+  });
+
+  transcribing = signal(false);
+  optimizing = signal(false);
+  summarizing = signal(false);
+  summaryRegenerating = signal<'timeline' | 'mindmap' | null>(null);
+  summaryPromptId = signal<string>('');
+  chatSending = signal(false);
+  chatDraft = signal('');
+  activeChatId = signal<string | null>(null);
+  chatEditingId = signal<string | null>(null);
+  chatTitleDraft = signal('');
+
+  chatIncludeTranscription = signal(true);
+  chatIncludeSummary = signal(false);
+
+  chatCollapsed = signal<Record<string, boolean>>({});
+
+  chatThoughtOpen = signal<Record<string, boolean>>({});
+
+  isChatMsgCollapsed(id: string): boolean {
+    const v = this.chatCollapsed()[id];
+    // Default collapsed for long assistant outputs.
+    return v === undefined ? true : !!v;
+  }
+
+  toggleChatMsgCollapse(id: string, evt?: Event): void {
+    evt?.preventDefault();
+    evt?.stopPropagation();
+    const cur = this.chatCollapsed();
+    const next = { ...cur, [id]: !cur[id] };
+    this.chatCollapsed.set(next);
+  }
+
+  isChatThoughtOpen(id: string): boolean {
+    const v = this.chatThoughtOpen()[id];
+    return !!v;
+  }
+
+  toggleChatThought(id: string, evt?: Event): void {
+    evt?.preventDefault();
+    evt?.stopPropagation();
+    const cur = this.chatThoughtOpen();
+    const next = { ...cur, [id]: !cur[id] };
+    this.chatThoughtOpen.set(next);
+  }
+
+  private splitAssistantThought(content: string): { visible: string; thought: string } {
+    const raw = (content || '').toString();
+    if (!raw.trim()) return { visible: '', thought: '' };
+
+    let thought = '';
+    let visible = raw;
+
+    // Common model tags.
+    const tagRe = /<(think|analysis)>([\s\S]*?)<\/\1>/gi;
+    visible = visible.replace(tagRe, (_m, _tag, inner) => {
+      const t = (inner || '').toString().trim();
+      if (t) thought += (thought ? '\n\n' : '') + t;
+      return '';
     });
 
-   videoEl = viewChild<ElementRef<HTMLVideoElement>>('videoEl');
-   audioEl = viewChild<ElementRef<HTMLAudioElement>>('audioEl');
-   playerContainer = viewChild<ElementRef<HTMLElement>>('playerContainer');
-   noteEditorBox = viewChild<ElementRef<HTMLElement>>('noteEditorBox');
-
-   playerSrc = signal<SafeResourceUrl | null>(null);
-   playerResolving = signal(false);
-   playerLoading = signal(false);
-   playerError = signal<string | null>(null);
-   isPlaying = signal(false);
-   isMuted = signal(false);
-   domFullscreen = signal(false);
-   windowFullscreen = signal(false);
-   isFullscreen = computed(() => this.domFullscreen() || this.windowFullscreen());
-   pseudoFullscreen = computed(() => this.windowFullscreen() && !this.domFullscreen());
-   isPiP = signal(false);
-   playerControlsVisible = signal(true);
-   private playerControlsHideTimer: any = null;
-   private playerDuration = signal<number | null>(null);
-
-   duration = computed(() => {
-      const d = this.playerDuration();
-      if (typeof d === 'number' && isFinite(d) && d > 0) return d;
-      const m = this.media();
-      return m?.duration || 0;
-   });
-
-   progressPct = computed(() => {
-      const dur = this.duration();
-      if (!dur || dur <= 0) return 0;
-      const pct = (this.currentTime() / dur) * 100;
-      return Math.max(0, Math.min(100, pct));
-   });
-
-   progressRatio = computed(() => this.progressPct() / 100);
-
-   playerHint = computed(() => {
-      const m = this.media();
-      if (!m) return null;
-      if (this.playerError()) return '播放器加载失败（请检查文件是否存在）';
-      if (this.playerResolving()) return '正在准备播放器...';
-      if (this.playerLoading()) return '正在解析媒体...';
-      if (this.playerSrc()) return null;
-      if (!this.tauri.isTauri()) return 'Web 预览模式暂不支持本地播放';
-
-      if (m.source.type === 'online') {
-         return (m.source as any).cachedPath
-            ? null
-            : '此在线资源尚未下载到本地';
-      }
-
-      if (m.source.type === 'local') {
-         return m.source.path ? null : '文件尚未导入到本地';
-      }
-
-      return null;
-   });
-
-   activeTab = signal<TabId>('notes');
-   currentTime = signal(0);
-
-   subtitles = signal<SubtitlesFile | null>(null);
-   subtitlesLoading = signal(false);
-   subtitleTrackId = signal<string>('original');
-   ccEnabled = signal(false);
-   ccMenuOpen = signal(false);
-   ccSettingsOpen = signal(false);
-   ccStyle = signal({
-     fontSize: 18,
-     x: 0.5,
-     y: 0.85,
-     color: '#ffffff',
-     bgOpacity: 0.35,
-   });
-   translatingSubtitles = signal(false);
-
-   subtitleTracks = computed<SubtitleTrack[]>(() => {
-     const subs = this.subtitles();
-     return subs?.tracks || [];
-   });
-
-   private transcriptionAsTrack(m: MediaItem | null): SubtitleTrack | null {
-     if (!m?.transcription?.segments?.length) return null;
-     const segs: SubtitleSegment[] = m.transcription.segments
-       .filter(s => (s.text || '').trim())
-       .map(s => ({
-         id: s.id,
-         start: Number(s.start) || 0,
-         end: Number(s.end) || Number(s.start) || 0,
-         text: (s.text || '').toString(),
-       }));
-     return {
-       id: 'original',
-       label: 'Original',
-       language: m.transcription.language,
-       kind: 'transcription',
-       segments: segs,
-     };
-   }
-
-   availableSubtitleTracks = computed<SubtitleTrack[]>(() => {
-     const subs = this.subtitles();
-     if (subs?.tracks?.length) {
-       return subs.tracks.filter(t => (t.segments || []).length > 0);
-     }
-     const m = this.media();
-     const t = this.transcriptionAsTrack(m);
-     return t ? [t] : [];
-   });
-
-   selectedSubtitleTrack = computed<SubtitleTrack | null>(() => {
-     const id = (this.subtitleTrackId() || '').trim();
-     if (!id) return null;
-     const tracks = this.availableSubtitleTracks();
-     return tracks.find(t => t.id === id) || tracks[0] || null;
-   });
-
-   transcriptSegments = computed<Array<Pick<SubtitleSegment, 'id' | 'start' | 'end' | 'text'>>>(() => {
-     const t = this.selectedSubtitleTrack();
-     if (!t) {
-       const m = this.media();
-       return (m?.transcription?.segments || []).map(s => ({ id: s.id, start: s.start, end: s.end, text: s.text }));
-     }
-     return (t.segments || []).map(s => ({ id: s.id, start: s.start, end: s.end, text: s.text }));
-   });
-
-   activeSubtitleText = computed<string | null>(() => {
-      if (!this.ccEnabled()) return null;
-      const t = this.selectedSubtitleTrack();
-      if (!t) return null;
-     const segs = t.segments || [];
-     if (!segs.length) return null;
-     const cur = Number(this.currentTime()) || 0;
-
-     // Binary search by start time.
-     let lo = 0;
-     let hi = segs.length - 1;
-     let best = -1;
-     while (lo <= hi) {
-       const mid = (lo + hi) >> 1;
-       const s = Number(segs[mid].start) || 0;
-       if (s <= cur) {
-         best = mid;
-         lo = mid + 1;
-       } else {
-         hi = mid - 1;
-       }
-     }
-     if (best < 0) return null;
-     const seg = segs[best];
-     const end = Number(seg.end) || Number(seg.start) || 0;
-     if (cur < (Number(seg.start) || 0) || cur >= end) return null;
-      const text = (seg.text || '').toString().trim();
-      return text || null;
-   });
-
-   ccDisplayText = computed<string | null>(() => {
-     const live = this.activeSubtitleText();
-     if (live) return live;
-     if (this.ccSettingsOpen()) return '字幕预览\nDrag / Resize';
-     return null;
-   });
-
-   ccOverlayStyle = computed(() => {
-     const s: any = this.ccStyle();
-     const x = Number(s.x);
-     const y = Number(s.y);
-     return {
-       '--cc-font-size': `${Math.max(10, Math.min(72, Number(s.fontSize) || 18))}px`,
-       '--cc-x': `${Math.max(0.05, Math.min(0.95, isFinite(x) ? x : 0.5)) * 100}%`,
-       '--cc-y': `${Math.max(0.05, Math.min(0.95, isFinite(y) ? y : 0.85)) * 100}%`,
-       '--cc-color': (s.color || '#ffffff'),
-       '--cc-bg': `${Math.max(0, Math.min(0.9, Number(s.bgOpacity) || 0))}`,
-     } as any;
-   });
-
-   moreMenuOpen = signal(false);
-
-    exporting = signal(false);
-
-    transcriptionDialogOpen = signal(false);
-    transcriptionDraft = signal<Pick<AppSettings['transcription'], 'language' | 'localAccelerator' | 'numThreads' | 'useItn'>>({
-       language: 'auto',
-       localAccelerator: 'auto',
-       numThreads: 0,
-       useItn: true,
+    // Code fences like ```thinking / ```analysis / ```reasoning
+    const fenceRe = /```\s*(thinking|analysis|reasoning)\s*\n([\s\S]*?)```/gi;
+    visible = visible.replace(fenceRe, (_m, _lang, inner) => {
+      const t = (inner || '').toString().trim();
+      if (t) thought += (thought ? '\n\n' : '') + t;
+      return '';
     });
 
-    patchTranscriptionDraft(patch: Partial<AppSettings['transcription']>): void {
-       this.transcriptionDraft.update((prev) => {
-         const next = { ...prev, ...patch } as any;
-         if (typeof next.numThreads === 'number') {
-           next.numThreads = Math.max(0, Math.min(64, Math.floor(next.numThreads || 0)));
-         }
-         return next;
-       });
+    visible = visible.trim();
+    thought = thought.trim();
+
+    // If the model only returned thought, don't hide everything.
+    if (!visible && thought) {
+      return { visible: thought, thought: '' };
     }
+    return { visible, thought };
+  }
 
-   // Waveform Mock Data
-   waveformBars: { height: number }[] = [];
-   hoverX = 0;
+  chatMsgVisible(content: string): string {
+    return this.splitAssistantThought(content).visible;
+  }
 
-   tabs = [
-      { id: 'notes' as TabId, label: '笔记' },
-      { id: 'bookmarks' as TabId, label: '书签' },
-      { id: 'transcript' as TabId, label: '转写' },
-      { id: 'summary' as TabId, label: 'AI 总结' },
-      { id: 'chat' as TabId, label: 'AI 对话' },
-   ];
+  chatMsgThought(content: string): string {
+    return this.splitAssistantThought(content).thought;
+  }
 
-   private latestJob(type: ProcessingJob['type']): ProcessingJob | null {
-      const m = this.media();
-      if (!m) return null;
-      return this.state.processingJobs().find(j => j.mediaId === m.id && j.type === type) || null;
-   }
+  chatMsgPreview(content: string): string {
+    const s = (content || '').trim();
+    if (!s) return '';
+    const lines = s.split(/\r?\n/);
+    if (lines.length <= 10) return s;
+    return lines.slice(0, 10).join('\n') + '\n…';
+  }
 
-   transcriptionJob = computed(() => this.latestJob('transcription'));
-   optimizeJob = computed(() => this.latestJob('optimize'));
-   summaryJob = computed(() => this.latestJob('summary'));
-   subtitleJob = computed(() => this.latestJob('subtitle'));
-
-   activeJobBanner = computed<ProcessingJob | null>(() => {
-      const m = this.media();
-      if (!m) return null;
-      return this.state.processingJobs().find(j =>
-        j.mediaId === m.id && (j.status === 'pending' || j.status === 'processing')
-      ) || null;
-   });
-
-   transcriptionRunning = computed(() => {
-      const j = this.transcriptionJob();
-      return !!j && (j.status === 'pending' || j.status === 'processing');
-   });
-
-   optimizeRunning = computed(() => {
-     const j = this.optimizeJob();
-     return !!j && (j.status === 'pending' || j.status === 'processing');
-   });
-
-   summaryRunning = computed(() => {
-      const j = this.summaryJob();
-      return !!j && (j.status === 'pending' || j.status === 'processing');
-   });
-
-   subtitleRunning = computed(() => {
-     const j = this.subtitleJob();
-     return !!j && (j.status === 'pending' || j.status === 'processing');
-   });
-
-   transcribing = signal(false);
-   optimizing = signal(false);
-   summarizing = signal(false);
-   summaryRegenerating = signal<'timeline' | 'mindmap' | null>(null);
-   summaryPromptId = signal<string>('');
-   chatSending = signal(false);
-   chatDraft = signal('');
-   activeChatId = signal<string | null>(null);
-   chatEditingId = signal<string | null>(null);
-   chatTitleDraft = signal('');
-
-   chatIncludeTranscription = signal(true);
-   chatIncludeSummary = signal(false);
-
-   chatCollapsed = signal<Record<string, boolean>>({});
-
-   isChatMsgCollapsed(id: string): boolean {
-     const v = this.chatCollapsed()[id];
-     // Default collapsed for long assistant outputs.
-     return v === undefined ? true : !!v;
-   }
-
-   toggleChatMsgCollapse(id: string, evt?: Event): void {
-     evt?.preventDefault();
-     evt?.stopPropagation();
-     const cur = this.chatCollapsed();
-     const next = { ...cur, [id]: !cur[id] };
-     this.chatCollapsed.set(next);
-   }
-
-   chatMsgPreview(content: string): string {
-     const s = (content || '').trim();
-     if (!s) return '';
-     const lines = s.split(/\r?\n/);
-     if (lines.length <= 10) return s;
-     return lines.slice(0, 10).join('\n') + '\n…';
-   }
-
-   tagEditing = signal(false);
-   tagDraft = signal('');
+  tagEditing = signal(false);
+  tagDraft = signal('');
 
 
-   // Note editor (floating panel)
-   noteDockedOpen = signal(false);
-   noteEditorOpen = signal(false);
-   noteEditorId = signal<string | null>(null);
-   noteEditorTitle = signal('');
-   noteEditorContent = signal('');
-   noteEditorTimestamp = signal<number | null>(null);
-   noteEditorW = signal(720);
-   noteEditorH = signal(520);
-   noteEditorX = signal(0);
-   noteEditorY = signal(0);
-   noteAutosaving = signal(false);
-   noteAutosavedAt = signal<number | null>(null);
-   noteAutosaveLabel = computed(() => {
-     if (this.noteAutosaving()) return '保存中…';
-     const t = this.noteAutosavedAt();
-     if (t && Date.now() - t < 2500) return '已保存';
-     return '自动保存';
-   });
-   noteEditorHint = computed(() => {
-     const id = this.noteEditorId();
-     const ts = this.noteEditorTimestamp();
-     const t = ts !== null ? this.formatTime(ts) : '-';
-     return `${id ? id : 'new'} • ${t} • 自动保存`;
-   });
+  // Note editor (floating panel)
+  noteDockedOpen = signal(false);
+  noteEditorOpen = signal(false);
+  noteEditorId = signal<string | null>(null);
+  noteEditorTitle = signal('');
+  noteEditorContent = signal('');
+  noteEditorTimestamp = signal<number | null>(null);
+  noteEditorW = signal(720);
+  noteEditorH = signal(520);
+  noteEditorX = signal(0);
+  noteEditorY = signal(0);
+  noteAutosaving = signal(false);
+  noteAutosavedAt = signal<number | null>(null);
+  noteAutosaveLabel = computed(() => {
+    if (this.noteAutosaving()) return '保存中…';
+    const t = this.noteAutosavedAt();
+    if (t && Date.now() - t < 2500) return '已保存';
+    return '自动保存';
+  });
+  noteEditorHint = computed(() => {
+    const id = this.noteEditorId();
+    const ts = this.noteEditorTimestamp();
+    const t = ts !== null ? this.formatTime(ts) : '-';
+    return `${id ? id : 'new'} • ${t} • 自动保存`;
+  });
 
-    private noteDragActive = false;
-    private noteDragOffsetX = 0;
-    private noteDragOffsetY = 0;
-   private noteResizeObserver: ResizeObserver | null = null;
-   private noteAutosaveTimer: any = null;
-   private noteLoading = false;
+  private noteDragActive = false;
+  private noteDragOffsetX = 0;
+  private noteDragOffsetY = 0;
+  private noteResizeObserver: ResizeObserver | null = null;
+  private noteAutosaveTimer: any = null;
+  private noteLoading = false;
 
-    notePreview(raw: string): string {
-      const s = (raw || '').toString();
-      if (!s.trim()) return '';
-      // Drop code fences quickly.
-      const noFences = s.replace(/```[\s\S]*?```/g, ' ');
-      // Strip some common markdown tokens.
-      const stripped = noFences
-        .replace(/(^|\n)\s{0,3}#{1,6}\s+/g, ' ')
-        .replace(/\*\*(.*?)\*\*/g, '$1')
-        .replace(/\*(.*?)\*/g, '$1')
-        .replace(/`([^`]+)`/g, '$1')
-        .replace(/(^|\n)\s*>\s?/g, ' ')
-        .replace(/\[[^\]]+\]\([^\)]+\)/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      return stripped;
+  notePreview(raw: string): string {
+    const s = (raw || '').toString();
+    if (!s.trim()) return '';
+    // Drop code fences quickly.
+    const noFences = s.replace(/```[\s\S]*?```/g, ' ');
+    // Strip some common markdown tokens.
+    const stripped = noFences
+      .replace(/(^|\n)\s{0,3}#{1,6}\s+/g, ' ')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/(^|\n)\s*>\s?/g, ' ')
+      .replace(/\[[^\]]+\]\([^\)]+\)/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return stripped;
+  }
+
+  activeConversation = computed<AIConversation | null>(() => {
+    const m = this.media();
+    if (!m) return null;
+    if (m.aiChats.length === 0) return null;
+    const wanted = this.activeChatId();
+    if (wanted) {
+      return m.aiChats.find(c => c.id === wanted) || m.aiChats[m.aiChats.length - 1] || null;
     }
+    return m.aiChats[m.aiChats.length - 1] || null;
+  });
 
-    activeConversation = computed<AIConversation | null>(() => {
-      const m = this.media();
-      if (!m) return null;
-      if (m.aiChats.length === 0) return null;
-      const wanted = this.activeChatId();
-      if (wanted) {
-         return m.aiChats.find(c => c.id === wanted) || m.aiChats[m.aiChats.length - 1] || null;
+  beginRenameChat(chatId: string, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const m = this.media();
+    if (!m) return;
+    const chat = m.aiChats.find(c => c.id === chatId);
+    if (!chat) return;
+    this.chatEditingId.set(chatId);
+    this.chatTitleDraft.set(chat.title || '');
+  }
+
+  commitRenameChat(chatId: string, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const m = this.media();
+    if (!m) return;
+    const title = this.chatTitleDraft().trim();
+    if (!title) {
+      this.chatEditingId.set(null);
+      return;
+    }
+    this.state.renameAIConversation(m.id, chatId, title);
+    this.chatEditingId.set(null);
+    this.chatTitleDraft.set('');
+  }
+
+  cancelRenameChat(event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.chatEditingId.set(null);
+    this.chatTitleDraft.set('');
+  }
+
+  async deleteChat(chatId: string, event?: Event): Promise<void> {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const m = this.media();
+    if (!m) return;
+    const chat = m.aiChats.find(c => c.id === chatId);
+    const ok = await this.confirm.confirm({
+      title: '删除对话',
+      message: `确定要删除 “${chat?.title || '对话'}” 吗？`,
+      confirmText: '删除',
+      cancelText: '取消',
+      danger: true,
+    });
+    if (!ok) return;
+    this.state.deleteAIConversation(m.id, chatId);
+    // if deleting active, fall back
+    if (this.activeChatId() === chatId) {
+      const next = m.aiChats.filter(c => c.id !== chatId);
+      this.activeChatId.set(next.length ? next[next.length - 1].id : null);
+    }
+  }
+
+  selectChat(chatId: string): void {
+    this.activeChatId.set(chatId);
+    this.activeTab.set('chat');
+  }
+
+  private playerSrcSeq = 0;
+  private lastPlayerKey: string | null = null;
+
+  private subtitlesSeq = 0;
+  private lastSubtitlesMediaId: string | null = null;
+
+  private ccPersistTimer: any = null;
+  private ccStyleReady = false;
+
+  private persistCcStyleNow(): void {
+    const s: any = this.ccStyle();
+    const next = {
+      fontSize: Math.max(10, Math.min(72, Math.round(Number(s.fontSize) || 18))),
+      x: Math.max(0.05, Math.min(0.95, Number(s.x) || 0.5)),
+      y: Math.max(0.05, Math.min(0.95, Number(s.y) || 0.85)),
+      color: (typeof s.color === 'string' && s.color.trim()) ? s.color.trim() : '#ffffff',
+      bgOpacity: Math.max(0, Math.min(0.9, Number(s.bgOpacity) || 0.35)),
+    };
+    this.state.updateSettings(prev => ({
+      ...prev,
+      player: {
+        ...prev.player,
+        ccStyle: next,
       }
-      return m.aiChats[m.aiChats.length - 1] || null;
+    }));
+  }
+
+  constructor() {
+    // Make route params reactive even when the component instance is reused.
+    this.mediaId.set(this.route.snapshot.paramMap.get('id'));
+    this.route.paramMap
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((pm) => {
+        const nextId = pm.get('id');
+        if (nextId === this.mediaId()) return;
+        this.mediaId.set(nextId);
+        if (nextId) {
+          this.state.setActiveMediaItem(nextId);
+          this.generateWaveform();
+        }
+      });
+
+    effect(() => {
+      const m = this.media();
+      void this.refreshPlayerSource(m);
+      void this.refreshSubtitles(m);
     });
 
-    beginRenameChat(chatId: string, event?: Event): void {
-      event?.preventDefault();
-      event?.stopPropagation();
-      const m = this.media();
-      if (!m) return;
-      const chat = m.aiChats.find(c => c.id === chatId);
-      if (!chat) return;
-      this.chatEditingId.set(chatId);
-      this.chatTitleDraft.set(chat.title || '');
-    }
-
-    commitRenameChat(chatId: string, event?: Event): void {
-      event?.preventDefault();
-      event?.stopPropagation();
-      const m = this.media();
-      if (!m) return;
-      const title = this.chatTitleDraft().trim();
-      if (!title) {
-        this.chatEditingId.set(null);
+    effect(() => {
+      const ai = this.state.settings().ai;
+      const list = ai.summaryPrompts || [];
+      const current = this.summaryPromptId();
+      const fallback = ai.defaultSummaryPromptId || (list[0]?.id || '');
+      if (!current) {
+        this.summaryPromptId.set(fallback);
         return;
       }
-      this.state.renameAIConversation(m.id, chatId, title);
-      this.chatEditingId.set(null);
-      this.chatTitleDraft.set('');
-    }
+      if (list.length && !list.some(p => p.id === current)) {
+        this.summaryPromptId.set(fallback);
+      }
+    });
 
-    cancelRenameChat(event?: Event): void {
-      event?.preventDefault();
-      event?.stopPropagation();
-      this.chatEditingId.set(null);
-      this.chatTitleDraft.set('');
-    }
+    effect(() => {
+      // Autosave note edits (debounced)
+      const id = this.noteEditorId();
+      const open = this.noteDockedOpen() || this.noteEditorOpen();
+      const _t = this.noteEditorTitle();
+      const _c = this.noteEditorContent();
+      const _ts = this.noteEditorTimestamp();
+      if (!id || !open) return;
+      this.scheduleNoteAutosave();
+    });
 
-    async deleteChat(chatId: string, event?: Event): Promise<void> {
-      event?.preventDefault();
-      event?.stopPropagation();
-      const m = this.media();
-      if (!m) return;
-      const chat = m.aiChats.find(c => c.id === chatId);
-      const ok = await this.confirm.confirm({
-        title: '删除对话',
-        message: `确定要删除 “${chat?.title || '对话'}” 吗？`,
-        confirmText: '删除',
-        cancelText: '取消',
-        danger: true,
+    effect(() => {
+      // Track detached note editor resizes
+      const open = this.noteEditorOpen();
+      const box = this.noteEditorBox()?.nativeElement;
+      if (!open || !box) {
+        if (this.noteResizeObserver) {
+          this.noteResizeObserver.disconnect();
+          this.noteResizeObserver = null;
+        }
+        return;
+      }
+
+      if (this.noteResizeObserver) return;
+      this.noteResizeObserver = new ResizeObserver(() => {
+        const el = this.noteEditorBox()?.nativeElement;
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        const w = Math.max(420, Math.min(window.innerWidth - 16, Math.round(r.width)));
+        const h = Math.max(320, Math.min(window.innerHeight - 16, Math.round(r.height)));
+        if (Math.abs(w - this.noteEditorW()) > 1) this.noteEditorW.set(w);
+        if (Math.abs(h - this.noteEditorH()) > 1) this.noteEditorH.set(h);
       });
-      if (!ok) return;
-      this.state.deleteAIConversation(m.id, chatId);
-      // if deleting active, fall back
-      if (this.activeChatId() === chatId) {
-        const next = m.aiChats.filter(c => c.id !== chatId);
-        this.activeChatId.set(next.length ? next[next.length - 1].id : null);
+      this.noteResizeObserver.observe(box);
+    });
+
+    effect(() => {
+      // One-time hydrate CC style from persisted settings.
+      const s = this.state.settings().player.ccStyle;
+      if (this.ccStyleReady) return;
+      this.ccStyle.set({ ...s } as any);
+      this.ccStyleReady = true;
+    });
+
+    effect(() => {
+      // Persist CC style changes (debounced). Only when the CC settings panel is open.
+      const open = this.ccSettingsOpen();
+      const _s = this.ccStyle();
+      if (!this.ccStyleReady || !open) return;
+      if (this.ccPersistTimer) {
+        clearTimeout(this.ccPersistTimer);
+        this.ccPersistTimer = null;
+      }
+      this.ccPersistTimer = setTimeout(() => {
+        this.ccPersistTimer = null;
+        this.persistCcStyleNow();
+      }, 260);
+    });
+  }
+
+  ngOnInit(): void {
+    const id = this.mediaId();
+    if (id) {
+      this.state.setActiveMediaItem(id);
+      this.generateWaveform();
+    }
+
+    void this.refreshFullscreenState();
+  }
+
+  ngOnDestroy(): void {
+    if (this.ccPersistTimer) {
+      clearTimeout(this.ccPersistTimer);
+      this.ccPersistTimer = null;
+    }
+    this.endHold();
+    this.flushNoteAutosave();
+    if (this.playerControlsHideTimer) {
+      clearTimeout(this.playerControlsHideTimer);
+      this.playerControlsHideTimer = null;
+    }
+    if (this.noteAutosaveTimer) {
+      clearTimeout(this.noteAutosaveTimer);
+      this.noteAutosaveTimer = null;
+    }
+    if (this.noteResizeObserver) {
+      this.noteResizeObserver.disconnect();
+      this.noteResizeObserver = null;
+    }
+    this.pause();
+    const m = this.media();
+    if (m) {
+      this.state.updateMediaItem(m.id, {
+        lastPosition: this.currentTime()
+      });
+    }
+  }
+
+  generateWaveform() {
+    // Generate 100 bars with random heights to simulate audio
+    this.waveformBars = Array.from({ length: 80 }, () => ({
+      height: Math.max(20, Math.random() * 100)
+    }));
+  }
+
+  formatTime(seconds: number | undefined | null): string {
+    if (seconds === undefined || seconds === null || isNaN(seconds)) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  seekTo(timestamp: number): void {
+    const dur = this.duration();
+    const next = Math.max(0, Math.min(dur || timestamp, timestamp));
+    this.currentTime.set(next);
+    const el = this.activeMediaEl();
+    if (el) {
+      try {
+        el.currentTime = next;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  onSeek(event: MouseEvent, duration: number) {
+    const element = event.currentTarget as HTMLElement;
+    const rect = element.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const percentage = x / rect.width;
+    const dur = duration || this.duration();
+    const newTime = percentage * (dur || 0);
+    this.seekTo(newTime);
+  }
+
+  onTimeUpdate(event: Event): void {
+    const el = event.target as HTMLMediaElement | null;
+    if (!el) return;
+    this.currentTime.set(el.currentTime || 0);
+  }
+
+  onLoadedMetadata(event: Event): void {
+    const el = event.target as HTMLMediaElement | null;
+    const m = this.media();
+    if (!el || !m) return;
+
+    this.playerLoading.set(false);
+
+    this.isMuted.set(!!el.muted);
+
+    const dur = Number(el.duration);
+    if (isFinite(dur) && dur > 0) {
+      this.playerDuration.set(dur);
+      if (!m.duration || Math.abs(m.duration - dur) > 0.5) {
+        this.state.updateMediaItem(m.id, { duration: dur });
       }
     }
 
-    selectChat(chatId: string): void {
-      this.activeChatId.set(chatId);
-      this.activeTab.set('chat');
-    }
-
-    private playerSrcSeq = 0;
-    private lastPlayerKey: string | null = null;
-
-    private subtitlesSeq = 0;
-    private lastSubtitlesMediaId: string | null = null;
-
-    constructor() {
-       // Make route params reactive even when the component instance is reused.
-       this.mediaId.set(this.route.snapshot.paramMap.get('id'));
-       this.route.paramMap
-          .pipe(takeUntilDestroyed(this.destroyRef))
-          .subscribe((pm) => {
-             const nextId = pm.get('id');
-             if (nextId === this.mediaId()) return;
-             this.mediaId.set(nextId);
-             if (nextId) {
-                this.state.setActiveMediaItem(nextId);
-                this.generateWaveform();
-             }
-          });
-
-       effect(() => {
-          const m = this.media();
-          void this.refreshPlayerSource(m);
-          void this.refreshSubtitles(m);
-       });
-
-       effect(() => {
-         const ai = this.state.settings().ai;
-         const list = ai.summaryPrompts || [];
-         const current = this.summaryPromptId();
-         const fallback = ai.defaultSummaryPromptId || (list[0]?.id || '');
-         if (!current) {
-           this.summaryPromptId.set(fallback);
-           return;
-         }
-         if (list.length && !list.some(p => p.id === current)) {
-           this.summaryPromptId.set(fallback);
-         }
-       });
-
-       effect(() => {
-         // Autosave note edits (debounced)
-         const id = this.noteEditorId();
-         const open = this.noteDockedOpen() || this.noteEditorOpen();
-         const _t = this.noteEditorTitle();
-         const _c = this.noteEditorContent();
-         const _ts = this.noteEditorTimestamp();
-         if (!id || !open) return;
-         this.scheduleNoteAutosave();
-       });
-
-       effect(() => {
-         // Track detached note editor resizes
-         const open = this.noteEditorOpen();
-         const box = this.noteEditorBox()?.nativeElement;
-         if (!open || !box) {
-           if (this.noteResizeObserver) {
-             this.noteResizeObserver.disconnect();
-             this.noteResizeObserver = null;
-           }
-           return;
-         }
-
-         if (this.noteResizeObserver) return;
-         this.noteResizeObserver = new ResizeObserver(() => {
-           const el = this.noteEditorBox()?.nativeElement;
-           if (!el) return;
-           const r = el.getBoundingClientRect();
-           const w = Math.max(420, Math.min(window.innerWidth - 16, Math.round(r.width)));
-           const h = Math.max(320, Math.min(window.innerHeight - 16, Math.round(r.height)));
-           if (Math.abs(w - this.noteEditorW()) > 1) this.noteEditorW.set(w);
-           if (Math.abs(h - this.noteEditorH()) > 1) this.noteEditorH.set(h);
-         });
-         this.noteResizeObserver.observe(box);
-       });
-    }
-
-    ngOnInit(): void {
-       const id = this.mediaId();
-       if (id) {
-          this.state.setActiveMediaItem(id);
-          this.generateWaveform();
-       }
-
-       void this.refreshFullscreenState();
-    }
-
-    ngOnDestroy(): void {
-        this.endHold();
-        this.flushNoteAutosave();
-        if (this.playerControlsHideTimer) {
-          clearTimeout(this.playerControlsHideTimer);
-          this.playerControlsHideTimer = null;
+    const resume = Number(m.lastPosition || 0);
+    if (resume > 0 && isFinite(resume) && dur > 0 && resume < dur - 0.25) {
+      // Only auto-seek if we're still at the beginning.
+      if ((el.currentTime || 0) < 0.25) {
+        try {
+          el.currentTime = resume;
+          this.currentTime.set(resume);
+        } catch {
+          // ignore
         }
-        if (this.noteAutosaveTimer) {
-          clearTimeout(this.noteAutosaveTimer);
-          this.noteAutosaveTimer = null;
-        }
-       if (this.noteResizeObserver) {
-         this.noteResizeObserver.disconnect();
-         this.noteResizeObserver = null;
-       }
-       this.pause();
-       const m = this.media();
-       if (m) {
-          this.state.updateMediaItem(m.id, {
-             lastPosition: this.currentTime()
-          });
-       }
-   }
-
-   generateWaveform() {
-      // Generate 100 bars with random heights to simulate audio
-      this.waveformBars = Array.from({ length: 80 }, () => ({
-         height: Math.max(20, Math.random() * 100)
-      }));
-   }
-
-   formatTime(seconds: number | undefined | null): string {
-      if (seconds === undefined || seconds === null || isNaN(seconds)) return '0:00';
-      const mins = Math.floor(seconds / 60);
-      const secs = Math.floor(seconds % 60);
-      return `${mins}:${secs.toString().padStart(2, '0')}`;
-   }
-
-   seekTo(timestamp: number): void {
-      const dur = this.duration();
-      const next = Math.max(0, Math.min(dur || timestamp, timestamp));
-      this.currentTime.set(next);
-      const el = this.activeMediaEl();
-      if (el) {
-         try {
-            el.currentTime = next;
-         } catch {
-            // ignore
-         }
       }
-   }
-
-   onSeek(event: MouseEvent, duration: number) {
-      const element = event.currentTarget as HTMLElement;
-      const rect = element.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const percentage = x / rect.width;
-      const dur = duration || this.duration();
-      const newTime = percentage * (dur || 0);
-      this.seekTo(newTime);
-   }
-
-   onTimeUpdate(event: Event): void {
-      const el = event.target as HTMLMediaElement | null;
-      if (!el) return;
-      this.currentTime.set(el.currentTime || 0);
-   }
-
-   onLoadedMetadata(event: Event): void {
-      const el = event.target as HTMLMediaElement | null;
-      const m = this.media();
-      if (!el || !m) return;
-
-      this.playerLoading.set(false);
-
-      this.isMuted.set(!!el.muted);
-
-      const dur = Number(el.duration);
-      if (isFinite(dur) && dur > 0) {
-         this.playerDuration.set(dur);
-         if (!m.duration || Math.abs(m.duration - dur) > 0.5) {
-            this.state.updateMediaItem(m.id, { duration: dur });
-         }
-      }
-
-      const resume = Number(m.lastPosition || 0);
-      if (resume > 0 && isFinite(resume) && dur > 0 && resume < dur - 0.25) {
-         // Only auto-seek if we're still at the beginning.
-         if ((el.currentTime || 0) < 0.25) {
-            try {
-               el.currentTime = resume;
-               this.currentTime.set(resume);
-            } catch {
-               // ignore
-            }
-         }
-      }
-   }
-
-   onLoadedData(_: Event): void {
-      // First frame (video) / first data (audio) is ready.
-      this.playerLoading.set(false);
-   }
-
-   onMediaError(_: Event): void {
-      this.playerError.set('media load error');
-      this.playerLoading.set(false);
-   }
-
-    private showPlayerControls(autoHide: boolean = true): void {
-      this.playerControlsVisible.set(true);
-      if (this.playerControlsHideTimer) {
-        clearTimeout(this.playerControlsHideTimer);
-        this.playerControlsHideTimer = null;
-      }
-      if (!autoHide) return;
-      if (!this.isPlaying()) return;
-
-      this.playerControlsHideTimer = setTimeout(() => {
-        // Hide only while playing.
-        if (this.isPlaying()) {
-          this.playerControlsVisible.set(false);
-        }
-      }, 1800);
     }
+  }
 
-    onPlayerMouseMove(): void {
-      this.showPlayerControls(true);
+  onLoadedData(_: Event): void {
+    // First frame (video) / first data (audio) is ready.
+    this.playerLoading.set(false);
+  }
+
+  onMediaError(_: Event): void {
+    this.playerError.set('media load error');
+    this.playerLoading.set(false);
+  }
+
+  private showPlayerControls(autoHide: boolean = true): void {
+    this.playerControlsVisible.set(true);
+    if (this.playerControlsHideTimer) {
+      clearTimeout(this.playerControlsHideTimer);
+      this.playerControlsHideTimer = null;
     }
+    if (!autoHide) return;
+    if (!this.isPlaying()) return;
 
-    onPlayerMouseLeave(): void {
+    this.playerControlsHideTimer = setTimeout(() => {
+      // Hide only while playing.
       if (this.isPlaying()) {
         this.playerControlsVisible.set(false);
       }
+    }, 1800);
+  }
+
+  onPlayerMouseMove(): void {
+    this.showPlayerControls(true);
+  }
+
+  onPlayerMouseLeave(): void {
+    if (this.isPlaying()) {
+      this.playerControlsVisible.set(false);
     }
+  }
 
-   onPlay(): void {
-      this.isPlaying.set(true);
-      this.showPlayerControls(true);
-   }
+  onPlay(): void {
+    this.isPlaying.set(true);
+    this.showPlayerControls(true);
+  }
 
-   onPause(): void {
-      this.isPlaying.set(false);
-      this.showPlayerControls(false);
-   }
+  onPause(): void {
+    this.isPlaying.set(false);
+    this.showPlayerControls(false);
+  }
 
-   onEnded(): void {
-      this.isPlaying.set(false);
-      this.showPlayerControls(false);
-   }
+  onEnded(): void {
+    this.isPlaying.set(false);
+    this.showPlayerControls(false);
+  }
 
-    onPlayerStageClick(event: MouseEvent): void {
-      const t = event.target as HTMLElement | null;
-      if (!t) {
-        this.togglePlayback(event);
-        return;
-      }
-      // Ignore clicks inside controls (scrubber/buttons).
-      if (t.closest('.vecho-player-controls')) return;
+  onPlayerStageClick(event: MouseEvent): void {
+    const t = event.target as HTMLElement | null;
+    if (!t) {
       this.togglePlayback(event);
+      return;
     }
+    // Ignore clicks inside controls (scrubber/buttons).
+    if (t.closest('.vecho-player-controls')) return;
+    this.togglePlayback(event);
+  }
 
-    togglePlayback(event?: Event): void {
-      event?.preventDefault();
-      event?.stopPropagation();
+  togglePlayback(event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
 
-      this.showPlayerControls(true);
+    this.showPlayerControls(true);
 
-      const el = this.activeMediaEl();
-      if (!el) return;
+    const el = this.activeMediaEl();
+    if (!el) return;
 
-      if (el.paused) {
-         const p = el.play();
-         if (p && typeof (p as any).catch === 'function') {
-            (p as Promise<void>).catch((err) => {
-               console.error('play failed', err);
-               this.playerError.set('play failed');
-            });
-         }
+    if (el.paused) {
+      const p = el.play();
+      if (p && typeof (p as any).catch === 'function') {
+        (p as Promise<void>).catch((err) => {
+          console.error('play failed', err);
+          this.playerError.set('play failed');
+        });
+      }
+    } else {
+      el.pause();
+    }
+  }
+
+  toggleMute(event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const el = this.activeMediaEl();
+    if (!el) return;
+    el.muted = !el.muted;
+    this.isMuted.set(!!el.muted);
+  }
+
+  pipAvailable(): boolean {
+    const docAny = document as any;
+    const el = this.videoEl()?.nativeElement as any;
+    return !!el && !!docAny.pictureInPictureEnabled && typeof el.requestPictureInPicture === 'function';
+  }
+
+  async togglePiP(event?: Event): Promise<void> {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const docAny = document as any;
+    const el = this.videoEl()?.nativeElement as any;
+    if (!el || !this.pipAvailable()) return;
+
+    try {
+      if (docAny.pictureInPictureElement) {
+        await docAny.exitPictureInPicture();
+        this.isPiP.set(false);
       } else {
-         el.pause();
+        await el.requestPictureInPicture();
+        this.isPiP.set(true);
       }
-   }
+    } catch (err) {
+      console.error('togglePiP failed', err);
+    }
+  }
 
-   toggleMute(event?: Event): void {
-      event?.preventDefault();
-      event?.stopPropagation();
+  async toggleFullscreen(event?: Event): Promise<void> {
+    event?.preventDefault();
+    event?.stopPropagation();
 
-      const el = this.activeMediaEl();
-      if (!el) return;
-      el.muted = !el.muted;
-      this.isMuted.set(!!el.muted);
-   }
-
-   pipAvailable(): boolean {
-      const docAny = document as any;
-      const el = this.videoEl()?.nativeElement as any;
-      return !!el && !!docAny.pictureInPictureEnabled && typeof el.requestPictureInPicture === 'function';
-   }
-
-   async togglePiP(event?: Event): Promise<void> {
-      event?.preventDefault();
-      event?.stopPropagation();
-
-      const docAny = document as any;
-      const el = this.videoEl()?.nativeElement as any;
-      if (!el || !this.pipAvailable()) return;
-
-      try {
-         if (docAny.pictureInPictureElement) {
-            await docAny.exitPictureInPicture();
-            this.isPiP.set(false);
-         } else {
-            await el.requestPictureInPicture();
-            this.isPiP.set(true);
-         }
-      } catch (err) {
-         console.error('togglePiP failed', err);
-      }
-   }
-
-   async toggleFullscreen(event?: Event): Promise<void> {
-      event?.preventDefault();
-      event?.stopPropagation();
-
-      // If we're in Tauri window fullscreen (not DOM fullscreen), toggle it off.
-      if (!document.fullscreenElement && this.windowFullscreen()) {
-        await this.tauri.ready();
-        if (this.tauri.isTauri()) {
-          try {
-            const win = await import('@tauri-apps/api/window');
-            await win.getCurrentWindow().setFullscreen(false);
-            this.windowFullscreen.set(false);
-            this.domFullscreen.set(false);
-            return;
-          } catch (err) {
-            console.error('toggle fullscreen (tauri exit) failed', err);
-          }
-        }
-      }
-
-      // Prefer true DOM fullscreen on the player container.
-      try {
-         if (document.fullscreenElement) {
-            await document.exitFullscreen();
-            this.domFullscreen.set(false);
-            this.windowFullscreen.set(false);
-            return;
-         }
-         const target = (this.playerContainer()?.nativeElement || this.videoEl()?.nativeElement) as any;
-         if (target?.requestFullscreen) {
-            await target.requestFullscreen();
-            this.domFullscreen.set(true);
-            this.windowFullscreen.set(false);
-            return;
-         }
-      } catch (err) {
-         console.error('toggle fullscreen failed', err);
-      }
-
-      // Fallback: Tauri window fullscreen if DOM fullscreen is not available.
+    // If we're in Tauri window fullscreen (not DOM fullscreen), toggle it off.
+    if (!document.fullscreenElement && this.windowFullscreen()) {
       await this.tauri.ready();
       if (this.tauri.isTauri()) {
-         try {
-            const win = await import('@tauri-apps/api/window');
-            const w = win.getCurrentWindow();
-            const fs = await w.isFullscreen();
-            await w.setFullscreen(!fs);
-            this.windowFullscreen.set(!fs);
-            this.domFullscreen.set(false);
-         } catch (err) {
-            console.error('toggle fullscreen (tauri) failed', err);
-         }
-      }
-   }
-
-   @HostListener('document:fullscreenchange')
-   onFullscreenChange(): void {
-      const dom = !!document.fullscreenElement;
-      this.domFullscreen.set(dom);
-      if (dom) {
-        this.windowFullscreen.set(false);
-      }
-   }
-
-    @HostListener('document:click')
-    onDocumentClick(): void {
-       if (this.moreMenuOpen()) this.moreMenuOpen.set(false);
-       if (this.ccMenuOpen()) this.ccMenuOpen.set(false);
-    }
-
-   @HostListener('document:keydown.escape')
-    onDocumentEsc(): void {
-      if (this.noteEditorOpen()) {
-        this.closeNoteEditor();
-        return;
-      }
-      if (this.noteDockedOpen()) {
-        this.closeDockedNoteEditor();
-        return;
-      }
-       if (this.moreMenuOpen()) this.moreMenuOpen.set(false);
-       if (this.ccMenuOpen()) this.ccMenuOpen.set(false);
-    }
-
-    private holdTimer: any = null;
-    private scrubTimer: any = null;
-    private holding: 'left' | 'right' | null = null;
-    private wasPlayingBeforeHold = false;
-    private savedPlaybackRate = 1;
-
-    @HostListener('document:keydown', ['$event'])
-    onKeyDown(evt: KeyboardEvent): void {
-      const key = evt.key;
-
-      // Space toggles play/pause.
-      if (key === ' ' || key === 'Spacebar' || key === 'Space') {
-        const target = evt.target as HTMLElement | null;
-        if (target) {
-          const tag = (target.tagName || '').toLowerCase();
-          const isEditable = tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
-          if (isEditable) return;
+        try {
+          const win = await import('@tauri-apps/api/window');
+          await win.getCurrentWindow().setFullscreen(false);
+          this.windowFullscreen.set(false);
+          this.domFullscreen.set(false);
+          return;
+        } catch (err) {
+          console.error('toggle fullscreen (tauri exit) failed', err);
         }
-        evt.preventDefault();
-        this.togglePlayPause();
+      }
+    }
+
+    // Prefer true DOM fullscreen on the player container.
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        this.domFullscreen.set(false);
+        this.windowFullscreen.set(false);
         return;
       }
-
-      // Note editor shortcut.
-      if ((evt.ctrlKey || evt.metaKey) && key.toLowerCase() === 's' && (this.noteDockedOpen() || this.noteEditorOpen())) {
-        evt.preventDefault();
-        this.flushNoteAutosave();
+      const target = (this.playerContainer()?.nativeElement || this.videoEl()?.nativeElement) as any;
+      if (target?.requestFullscreen) {
+        await target.requestFullscreen();
+        this.domFullscreen.set(true);
+        this.windowFullscreen.set(false);
         return;
       }
+    } catch (err) {
+      console.error('toggle fullscreen failed', err);
+    }
 
-      if (key !== 'ArrowLeft' && key !== 'ArrowRight') return;
+    // Fallback: Tauri window fullscreen if DOM fullscreen is not available.
+    await this.tauri.ready();
+    if (this.tauri.isTauri()) {
+      try {
+        const win = await import('@tauri-apps/api/window');
+        const w = win.getCurrentWindow();
+        const fs = await w.isFullscreen();
+        await w.setFullscreen(!fs);
+        this.windowFullscreen.set(!fs);
+        this.domFullscreen.set(false);
+      } catch (err) {
+        console.error('toggle fullscreen (tauri) failed', err);
+      }
+    }
+  }
 
+  @HostListener('document:fullscreenchange')
+  onFullscreenChange(): void {
+    const dom = !!document.fullscreenElement;
+    this.domFullscreen.set(dom);
+    if (dom) {
+      this.windowFullscreen.set(false);
+    }
+  }
+
+  @HostListener('document:click')
+  onDocumentClick(): void {
+    if (this.moreMenuOpen()) this.moreMenuOpen.set(false);
+    if (this.ccMenuOpen()) this.ccMenuOpen.set(false);
+  }
+
+  @HostListener('document:keydown.escape')
+  onDocumentEsc(): void {
+    if (this.noteEditorOpen()) {
+      this.closeNoteEditor();
+      return;
+    }
+    if (this.noteDockedOpen()) {
+      this.closeDockedNoteEditor();
+      return;
+    }
+    if (this.moreMenuOpen()) this.moreMenuOpen.set(false);
+    if (this.ccMenuOpen()) this.ccMenuOpen.set(false);
+  }
+
+  private holdTimer: any = null;
+  private scrubTimer: any = null;
+  private holding: 'left' | 'right' | null = null;
+  private wasPlayingBeforeHold = false;
+  private savedPlaybackRate = 1;
+
+  @HostListener('document:keydown', ['$event'])
+  onKeyDown(evt: KeyboardEvent): void {
+    const key = evt.key;
+
+    // Space toggles play/pause.
+    if (key === ' ' || key === 'Spacebar' || key === 'Space') {
       const target = evt.target as HTMLElement | null;
       if (target) {
         const tag = (target.tagName || '').toLowerCase();
         const isEditable = tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
         if (isEditable) return;
       }
-
-      // Prevent the page from scrolling.
       evt.preventDefault();
-
-      // Ignore OS key repeat; we implement our own hold behavior.
-      if (evt.repeat) return;
-
-      const isLeft = key === 'ArrowLeft';
-      const jump = evt.shiftKey ? 15 : 5;
-      this.seekBy(isLeft ? -jump : jump);
-
-      // Start hold behavior after a short delay.
-      this.clearHoldTimers();
-      this.holding = isLeft ? 'left' : 'right';
-      this.holdTimer = setTimeout(() => {
-        if (this.holding !== (isLeft ? 'left' : 'right')) return;
-        this.beginHold(isLeft ? 'left' : 'right');
-      }, 260);
+      this.togglePlayPause();
+      return;
     }
 
-    @HostListener('document:keyup', ['$event'])
-    onKeyUp(evt: KeyboardEvent): void {
-      const key = evt.key;
-      if (key !== 'ArrowLeft' && key !== 'ArrowRight') return;
-      this.endHold();
+    // Note editor shortcut.
+    if ((evt.ctrlKey || evt.metaKey) && key.toLowerCase() === 's' && (this.noteDockedOpen() || this.noteEditorOpen())) {
+      evt.preventDefault();
+      this.flushNoteAutosave();
+      return;
     }
 
-    private clearHoldTimers(): void {
-      if (this.holdTimer) {
-        clearTimeout(this.holdTimer);
-        this.holdTimer = null;
-      }
-      if (this.scrubTimer) {
-        clearInterval(this.scrubTimer);
-        this.scrubTimer = null;
-      }
+    if (key !== 'ArrowLeft' && key !== 'ArrowRight') return;
+
+    const target = evt.target as HTMLElement | null;
+    if (target) {
+      const tag = (target.tagName || '').toLowerCase();
+      const isEditable = tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+      if (isEditable) return;
     }
 
-    private beginHold(dir: 'left' | 'right'): void {
-      const el = this.activeMediaEl();
-      if (!el) return;
+    // Prevent the page from scrolling.
+    evt.preventDefault();
 
-      this.wasPlayingBeforeHold = !el.paused;
-      this.savedPlaybackRate = el.playbackRate || 1;
+    // Ignore OS key repeat; we implement our own hold behavior.
+    if (evt.repeat) return;
 
-      // Hold right: if playing, use playbackRate=3 for smooth forward.
-      if (dir === 'right' && this.wasPlayingBeforeHold) {
-        try { el.playbackRate = 3; } catch {}
-        return;
-      }
+    const isLeft = key === 'ArrowLeft';
+    const jump = evt.shiftKey ? 15 : 5;
+    this.seekBy(isLeft ? -jump : jump);
 
-      // Hold left, or hold right while paused: scrub by seeking.
-      if (this.wasPlayingBeforeHold) {
-        try { el.pause(); } catch {}
-      }
+    // Start hold behavior after a short delay.
+    this.clearHoldTimers();
+    this.holding = isLeft ? 'left' : 'right';
+    this.holdTimer = setTimeout(() => {
+      if (this.holding !== (isLeft ? 'left' : 'right')) return;
+      this.beginHold(isLeft ? 'left' : 'right');
+    }, 260);
+  }
 
-      const step = 0.5;      // seconds per tick
-      const interval = 150;  // ms per tick (~3.3x)
-      this.scrubTimer = setInterval(() => {
-        this.seekBy(dir === 'left' ? -step : step);
-      }, interval);
+  @HostListener('document:keyup', ['$event'])
+  onKeyUp(evt: KeyboardEvent): void {
+    const key = evt.key;
+    if (key !== 'ArrowLeft' && key !== 'ArrowRight') return;
+    this.endHold();
+  }
+
+  private clearHoldTimers(): void {
+    if (this.holdTimer) {
+      clearTimeout(this.holdTimer);
+      this.holdTimer = null;
+    }
+    if (this.scrubTimer) {
+      clearInterval(this.scrubTimer);
+      this.scrubTimer = null;
+    }
+  }
+
+  private beginHold(dir: 'left' | 'right'): void {
+    const el = this.activeMediaEl();
+    if (!el) return;
+
+    this.wasPlayingBeforeHold = !el.paused;
+    this.savedPlaybackRate = el.playbackRate || 1;
+
+    // Hold right: if playing, use playbackRate=3 for smooth forward.
+    if (dir === 'right' && this.wasPlayingBeforeHold) {
+      try { el.playbackRate = 3; } catch { }
+      return;
     }
 
-    private endHold(): void {
-      const el = this.activeMediaEl();
-      const dir = this.holding;
-      this.holding = null;
-      this.clearHoldTimers();
-      if (!el) return;
-
-      // Restore playbackRate if we boosted it.
-      if (dir === 'right' && this.wasPlayingBeforeHold) {
-        try { el.playbackRate = this.savedPlaybackRate || 1; } catch {}
-      }
-
-      // If we paused for scrubbing, resume.
-      if (this.wasPlayingBeforeHold && dir === 'left') {
-        try { void el.play(); } catch {}
-      }
-
-      this.wasPlayingBeforeHold = false;
-      this.savedPlaybackRate = 1;
+    // Hold left, or hold right while paused: scrub by seeking.
+    if (this.wasPlayingBeforeHold) {
+      try { el.pause(); } catch { }
     }
 
-    private seekBy(deltaSeconds: number): void {
-      const el = this.activeMediaEl();
-      if (!el) return;
-      const cur = Number(el.currentTime) || 0;
-      const dur = Number.isFinite(el.duration) ? el.duration : this.duration();
-      const next = cur + deltaSeconds;
-      const clamped = dur && dur > 0 ? Math.max(0, Math.min(dur - 0.01, next)) : Math.max(0, next);
-      try {
-        el.currentTime = clamped;
-      } catch {
-        // ignore
-      }
-      this.currentTime.set(clamped);
+    const step = 0.5;      // seconds per tick
+    const interval = 150;  // ms per tick (~3.3x)
+    this.scrubTimer = setInterval(() => {
+      this.seekBy(dir === 'left' ? -step : step);
+    }, interval);
+  }
+
+  private endHold(): void {
+    const el = this.activeMediaEl();
+    const dir = this.holding;
+    this.holding = null;
+    this.clearHoldTimers();
+    if (!el) return;
+
+    // Restore playbackRate if we boosted it.
+    if (dir === 'right' && this.wasPlayingBeforeHold) {
+      try { el.playbackRate = this.savedPlaybackRate || 1; } catch { }
     }
 
-    private togglePlayPause(): void {
-      const el = this.activeMediaEl();
-      if (!el) return;
-      if (el.paused) {
-        try { void el.play(); } catch {}
+    // If we paused for scrubbing, resume.
+    if (this.wasPlayingBeforeHold && dir === 'left') {
+      try { void el.play(); } catch { }
+    }
+
+    this.wasPlayingBeforeHold = false;
+    this.savedPlaybackRate = 1;
+  }
+
+  private seekBy(deltaSeconds: number): void {
+    const el = this.activeMediaEl();
+    if (!el) return;
+    const cur = Number(el.currentTime) || 0;
+    const dur = Number.isFinite(el.duration) ? el.duration : this.duration();
+    const next = cur + deltaSeconds;
+    const clamped = dur && dur > 0 ? Math.max(0, Math.min(dur - 0.01, next)) : Math.max(0, next);
+    try {
+      el.currentTime = clamped;
+    } catch {
+      // ignore
+    }
+    this.currentTime.set(clamped);
+  }
+
+  private togglePlayPause(): void {
+    const el = this.activeMediaEl();
+    if (!el) return;
+    if (el.paused) {
+      try { void el.play(); } catch { }
+    } else {
+      try { el.pause(); } catch { }
+    }
+  }
+
+  private async refreshFullscreenState(): Promise<void> {
+    await this.tauri.ready();
+    if (!this.tauri.isTauri()) return;
+    try {
+      const win = await import('@tauri-apps/api/window');
+      const fs = await win.getCurrentWindow().isFullscreen();
+      this.windowFullscreen.set(fs);
+    } catch {
+      // ignore
+    }
+  }
+
+  pause(): void {
+    const el = this.activeMediaEl();
+    if (el && !el.paused) {
+      el.pause();
+    }
+  }
+
+  private activeMediaEl(): HTMLMediaElement | null {
+    const m = this.media();
+    if (!m) return null;
+    const ref = m.type === 'video' ? this.videoEl() : this.audioEl();
+    return ref?.nativeElement || null;
+  }
+
+  private playableFilePath(m: MediaItem): string | null {
+    if (m.source.type === 'local') {
+      return m.source.path || null;
+    }
+    if (m.source.type === 'online') {
+      const cached = (m.source as any).cachedPath;
+      return typeof cached === 'string' ? cached : null;
+    }
+    return null;
+  }
+
+  private isAbsolutePath(p: string): boolean {
+    const s = (p || '').trim();
+    if (!s) return false;
+    if (s.startsWith('/') || s.startsWith('\\')) return true;
+    // Windows drive letter.
+    return /^[a-zA-Z]:[\\/]/.test(s);
+  }
+
+  private async refreshPlayerSource(m: MediaItem | null): Promise<void> {
+    // Only rebuild the player when the playable source changes.
+    const key = m ? `${m.type}|${this.playableFilePath(m) || ''}` : null;
+    if (key && key === this.lastPlayerKey && this.playerSrc()) {
+      return;
+    }
+    this.lastPlayerKey = key;
+
+    const seq = ++this.playerSrcSeq;
+
+    this.playerError.set(null);
+    this.playerSrc.set(null);
+    this.playerLoading.set(false);
+    this.playerDuration.set(null);
+    this.isPlaying.set(false);
+
+    if (!m) return;
+    const path = this.playableFilePath(m);
+    if (!path) return;
+
+    this.playerResolving.set(true);
+    await this.tauri.ready();
+
+    if (seq !== this.playerSrcSeq) return;
+    if (!this.tauri.isTauri()) {
+      this.playerResolving.set(false);
+      return;
+    }
+
+    try {
+      const root = await this.tauri.getDataRoot();
+      let absPath = path;
+      const p = await import('@tauri-apps/api/path');
+
+      if (!this.isAbsolutePath(path)) {
+        absPath = await p.join(root, path);
       } else {
-        try { el.pause(); } catch {}
-      }
-    }
-
-   private async refreshFullscreenState(): Promise<void> {
-      await this.tauri.ready();
-      if (!this.tauri.isTauri()) return;
-      try {
-         const win = await import('@tauri-apps/api/window');
-         const fs = await win.getCurrentWindow().isFullscreen();
-         this.windowFullscreen.set(fs);
-      } catch {
-         // ignore
-      }
-   }
-
-   pause(): void {
-      const el = this.activeMediaEl();
-      if (el && !el.paused) {
-         el.pause();
-      }
-   }
-
-   private activeMediaEl(): HTMLMediaElement | null {
-      const m = this.media();
-      if (!m) return null;
-      const ref = m.type === 'video' ? this.videoEl() : this.audioEl();
-      return ref?.nativeElement || null;
-   }
-
-   private playableFilePath(m: MediaItem): string | null {
-      if (m.source.type === 'local') {
-         return m.source.path || null;
-      }
-      if (m.source.type === 'online') {
-         const cached = (m.source as any).cachedPath;
-         return typeof cached === 'string' ? cached : null;
-      }
-      return null;
-   }
-
-   private isAbsolutePath(p: string): boolean {
-      const s = (p || '').trim();
-      if (!s) return false;
-      if (s.startsWith('/') || s.startsWith('\\')) return true;
-      // Windows drive letter.
-      return /^[a-zA-Z]:[\\/]/.test(s);
-   }
-
-    private async refreshPlayerSource(m: MediaItem | null): Promise<void> {
-      // Only rebuild the player when the playable source changes.
-      const key = m ? `${m.type}|${this.playableFilePath(m) || ''}` : null;
-      if (key && key === this.lastPlayerKey && this.playerSrc()) {
-         return;
-      }
-      this.lastPlayerKey = key;
-
-      const seq = ++this.playerSrcSeq;
-
-      this.playerError.set(null);
-      this.playerSrc.set(null);
-      this.playerLoading.set(false);
-      this.playerDuration.set(null);
-      this.isPlaying.set(false);
-
-      if (!m) return;
-      const path = this.playableFilePath(m);
-      if (!path) return;
-
-      this.playerResolving.set(true);
-      await this.tauri.ready();
-
-      if (seq !== this.playerSrcSeq) return;
-      if (!this.tauri.isTauri()) {
-         this.playerResolving.set(false);
-         return;
-      }
-
-      try {
-         const root = await this.tauri.getDataRoot();
-         let absPath = path;
-         const p = await import('@tauri-apps/api/path');
-
-         if (!this.isAbsolutePath(path)) {
-            absPath = await p.join(root, path);
-         } else {
-            // If the file is outside allowed asset scope, stage it into data_root/media/<id>/.
-            const normRoot = (root || '').replace(/\\/g, '/').toLowerCase();
-            const normAbs = absPath.replace(/\\/g, '/').toLowerCase();
-            if (!normAbs.startsWith(normRoot)) {
-               try {
-                  const res = await this.backend.stageExternalFile(m.id, absPath);
-                  const rel = (res.stored_rel || '').trim();
-                  if (rel) {
-                     // Update persisted media source path to the staged relative path.
-                     const nextSource: any = { ...(m as any).source };
-                     if (nextSource.type === 'local') {
-                        nextSource.path = rel;
-                        if (typeof res.file_size === 'number') nextSource.fileSize = res.file_size;
-                     } else if (nextSource.type === 'online') {
-                        nextSource.cachedPath = rel;
-                        if (typeof res.file_size === 'number') nextSource.fileSize = res.file_size;
-                     }
-                     this.state.updateMediaItem(m.id, { source: nextSource });
-                     absPath = await p.join(root, rel);
-                  }
-               } catch (e) {
-                  console.error('stageExternalFile failed', e);
-               }
+        // If the file is outside allowed asset scope, stage it into data_root/media/<id>/.
+        const normRoot = (root || '').replace(/\\/g, '/').toLowerCase();
+        const normAbs = absPath.replace(/\\/g, '/').toLowerCase();
+        if (!normAbs.startsWith(normRoot)) {
+          try {
+            const res = await this.backend.stageExternalFile(m.id, absPath);
+            const rel = (res.stored_rel || '').trim();
+            if (rel) {
+              // Update persisted media source path to the staged relative path.
+              const nextSource: any = { ...(m as any).source };
+              if (nextSource.type === 'local') {
+                nextSource.path = rel;
+                if (typeof res.file_size === 'number') nextSource.fileSize = res.file_size;
+              } else if (nextSource.type === 'online') {
+                nextSource.cachedPath = rel;
+                if (typeof res.file_size === 'number') nextSource.fileSize = res.file_size;
+              }
+              this.state.updateMediaItem(m.id, { source: nextSource });
+              absPath = await p.join(root, rel);
             }
-         }
-
-         const url = await this.tauri.convertFileSrc(absPath);
-         if (seq !== this.playerSrcSeq) return;
-         this.playerSrc.set(this.sanitizer.bypassSecurityTrustResourceUrl(url));
-         this.playerLoading.set(true);
-      } catch (err) {
-         if (seq !== this.playerSrcSeq) return;
-         console.error('convertFileSrc failed', err);
-         this.playerError.set('convertFileSrc failed');
-      } finally {
-         if (seq === this.playerSrcSeq) {
-            this.playerResolving.set(false);
-         }
-      }
-   }
-
-   addQuickBookmark(): void {
-      const m = this.media();
-      if (!m) return;
-      const t = this.config.t();
-      this.state.addBookmark(m.id, {
-         timestamp: this.currentTime(),
-         label: (t as any).media?.detail?.quickMark
-            ? (t as any).media.detail.quickMark(this.formatTime(this.currentTime()))
-            : `Mark ${this.formatTime(this.currentTime())}`,
-         color: 'gray'
-      });
-      this.activeTab.set('bookmarks');
-   }
-
-    addNote(): void {
-       const m = this.media();
-       if (!m) return;
-       const t = this.config.t();
-
-      const ts = Number(this.currentTime());
-      const timestamp = Number.isFinite(ts) && ts >= 0 ? ts : undefined;
-
-      const created = this.state.addNoteToMedia(m.id, {
-         timestamp,
-         title: (t as any).media?.detail?.newNoteTitle || '新笔记',
-         content: (t as any).media?.detail?.newNoteContent || '写点想法...',
-         isPinned: false
-       });
-       this.activeTab.set('notes');
-
-      if (created) {
-        this.openNoteEditor(created.id);
-      }
-    }
-
-    private async refreshSubtitles(m: MediaItem | null): Promise<void> {
-      const seq = ++this.subtitlesSeq;
-
-      if (!m) {
-        this.subtitles.set(null);
-        this.lastSubtitlesMediaId = null;
-        return;
-      }
-
-      if (this.lastSubtitlesMediaId === m.id && this.subtitles()) {
-        return;
-      }
-
-      this.lastSubtitlesMediaId = m.id;
-      this.subtitlesLoading.set(true);
-      try {
-        await this.tauri.ready();
-        if (seq !== this.subtitlesSeq) return;
-        if (!this.tauri.isTauri()) {
-          this.subtitles.set(null);
-          return;
-        }
-
-        let subs = await this.backend.loadSubtitles(m.id);
-        if (!subs && m.transcription) {
-          subs = await this.backend.ensureSubtitles(m.id);
-        }
-        if (seq !== this.subtitlesSeq) return;
-        this.subtitles.set(subs);
-
-        // Normalize selection.
-        const tracks = this.availableSubtitleTracks();
-        const wanted = this.subtitleTrackId();
-        if (tracks.length && !tracks.some(t => t.id === wanted)) {
-          this.subtitleTrackId.set(tracks[0].id);
-        }
-      } catch {
-        if (seq !== this.subtitlesSeq) return;
-        this.subtitles.set(null);
-      } finally {
-        if (seq === this.subtitlesSeq) {
-          this.subtitlesLoading.set(false);
+          } catch (e) {
+            console.error('stageExternalFile failed', e);
+          }
         }
       }
-    }
 
-    toggleCcMenu(event: MouseEvent): void {
-      event.preventDefault();
-      event.stopPropagation();
-      this.ccMenuOpen.update(v => !v);
-    }
-
-    setCcTrack(trackId: string | null, event?: MouseEvent): void {
-      event?.preventDefault();
-      event?.stopPropagation();
-
-      if (!trackId || trackId === 'off') {
-        this.ccEnabled.set(false);
-        this.ccMenuOpen.set(false);
-        return;
-      }
-
-      this.subtitleTrackId.set(trackId);
-      this.ccEnabled.set(true);
-      this.ccMenuOpen.set(false);
-    }
-
-    resetCcStyle(): void {
-      this.ccStyle.set({
-        fontSize: 18,
-        x: 0.5,
-        y: 0.85,
-        color: '#ffffff',
-        bgOpacity: 0.35,
-      });
-    }
-
-    private ccDragActive = false;
-    private ccResizeActive = false;
-    private ccStartClientX = 0;
-    private ccStartClientY = 0;
-    private ccStartX = 0.5;
-    private ccStartY = 0.85;
-    private ccStartFontSize = 18;
-
-    private playerRect(): DOMRect | null {
-      const el = this.playerContainer()?.nativeElement;
-      if (!el) return null;
-      try {
-        return el.getBoundingClientRect();
-      } catch {
-        return null;
+      const url = await this.tauri.convertFileSrc(absPath);
+      if (seq !== this.playerSrcSeq) return;
+      this.playerSrc.set(this.sanitizer.bypassSecurityTrustResourceUrl(url));
+      this.playerLoading.set(true);
+    } catch (err) {
+      if (seq !== this.playerSrcSeq) return;
+      console.error('convertFileSrc failed', err);
+      this.playerError.set('convertFileSrc failed');
+    } finally {
+      if (seq === this.playerSrcSeq) {
+        this.playerResolving.set(false);
       }
     }
+  }
 
-    ccDragStart(evt: MouseEvent): void {
-      if (!this.ccSettingsOpen()) return;
-      if (evt.button !== 0) return;
-      evt.preventDefault();
-      evt.stopPropagation();
+  addQuickBookmark(): void {
+    const m = this.media();
+    if (!m) return;
+    const t = this.config.t();
+    this.state.addBookmark(m.id, {
+      timestamp: this.currentTime(),
+      label: (t as any).media?.detail?.quickMark
+        ? (t as any).media.detail.quickMark(this.formatTime(this.currentTime()))
+        : `Mark ${this.formatTime(this.currentTime())}`,
+      color: 'gray'
+    });
+    this.activeTab.set('bookmarks');
+  }
 
-      const s: any = this.ccStyle();
-      this.ccDragActive = true;
-      this.ccResizeActive = false;
-      this.ccStartClientX = evt.clientX;
-      this.ccStartClientY = evt.clientY;
-      this.ccStartX = Number(s.x) || 0.5;
-      this.ccStartY = Number(s.y) || 0.85;
+  addNote(): void {
+    const m = this.media();
+    if (!m) return;
+    const t = this.config.t();
+
+    const ts = Number(this.currentTime());
+    const timestamp = Number.isFinite(ts) && ts >= 0 ? ts : undefined;
+
+    const created = this.state.addNoteToMedia(m.id, {
+      timestamp,
+      title: (t as any).media?.detail?.newNoteTitle || '新笔记',
+      content: (t as any).media?.detail?.newNoteContent || '写点想法...',
+      isPinned: false
+    });
+    this.activeTab.set('notes');
+
+    if (created) {
+      this.openNoteEditor(created.id);
+    }
+  }
+
+  private async refreshSubtitles(m: MediaItem | null): Promise<void> {
+    const seq = ++this.subtitlesSeq;
+
+    if (!m) {
+      this.subtitles.set(null);
+      this.lastSubtitlesMediaId = null;
+      return;
     }
 
-    ccResizeStart(evt: MouseEvent): void {
-      if (!this.ccSettingsOpen()) return;
-      if (evt.button !== 0) return;
-      evt.preventDefault();
-      evt.stopPropagation();
-
-      const s: any = this.ccStyle();
-      this.ccResizeActive = true;
-      this.ccDragActive = false;
-      this.ccStartClientX = evt.clientX;
-      this.ccStartClientY = evt.clientY;
-      this.ccStartFontSize = Number(s.fontSize) || 18;
+    if (this.lastSubtitlesMediaId === m.id && this.subtitles()) {
+      return;
     }
 
-    @HostListener('document:mousemove', ['$event'])
-    onCcDragMove(evt: MouseEvent): void {
-      if (!this.ccSettingsOpen()) {
-        this.ccDragActive = false;
-        this.ccResizeActive = false;
-        return;
-      }
-
-      const rect = this.playerRect();
-      if (!rect || rect.width <= 0 || rect.height <= 0) return;
-
-      if (this.ccDragActive) {
-        const dx = evt.clientX - this.ccStartClientX;
-        const dy = evt.clientY - this.ccStartClientY;
-        const nextX = this.ccStartX + dx / rect.width;
-        const nextY = this.ccStartY + dy / rect.height;
-        this.ccStyle.set({
-          ...this.ccStyle(),
-          x: Math.max(0.05, Math.min(0.95, nextX)),
-          y: Math.max(0.05, Math.min(0.95, nextY)),
-        } as any);
-        return;
-      }
-
-      if (this.ccResizeActive) {
-        const dx = evt.clientX - this.ccStartClientX;
-        const dy = evt.clientY - this.ccStartClientY;
-        const delta = (dx - dy) / 12;
-        const next = Math.round(this.ccStartFontSize + delta);
-        this.ccStyle.set({
-          ...this.ccStyle(),
-          fontSize: Math.max(12, Math.min(72, next)),
-        } as any);
-      }
-    }
-
-    @HostListener('document:mouseup')
-    onCcDragEnd(): void {
-      this.ccDragActive = false;
-      this.ccResizeActive = false;
-    }
-
-    async translateSubtitlesToZh(): Promise<void> {
-      const m = this.media();
-      if (!m) return;
-
+    this.lastSubtitlesMediaId = m.id;
+    this.subtitlesLoading.set(true);
+    try {
       await this.tauri.ready();
+      if (seq !== this.subtitlesSeq) return;
       if (!this.tauri.isTauri()) {
-        this.toast.warning('Web 预览模式暂不支持字幕翻译');
+        this.subtitles.set(null);
         return;
       }
-      if (!m.transcription) {
-        this.toast.warning('请先生成转写');
-        return;
-      }
-      if (this.translatingSubtitles()) return;
 
-      this.translatingSubtitles.set(true);
+      let subs = await this.backend.loadSubtitles(m.id);
+      if (!subs && m.transcription) {
+        subs = await this.backend.ensureSubtitles(m.id);
+      }
+      if (seq !== this.subtitlesSeq) return;
+      this.subtitles.set(subs);
+
+      // Normalize selection.
+      const tracks = this.availableSubtitleTracks();
+      const wanted = this.subtitleTrackId();
+      if (tracks.length && !tracks.some(t => t.id === wanted)) {
+        this.subtitleTrackId.set(tracks[0].id);
+      }
+    } catch {
+      if (seq !== this.subtitlesSeq) return;
+      this.subtitles.set(null);
+    } finally {
+      if (seq === this.subtitlesSeq) {
+        this.subtitlesLoading.set(false);
+      }
+    }
+  }
+
+  toggleCcMenu(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.ccMenuOpen.update(v => !v);
+  }
+
+  setCcTrack(trackId: string | null, event?: MouseEvent): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    if (!trackId || trackId === 'off') {
+      this.ccEnabled.set(false);
+      this.ccMenuOpen.set(false);
+      return;
+    }
+
+    this.subtitleTrackId.set(trackId);
+    this.ccEnabled.set(true);
+    this.ccMenuOpen.set(false);
+  }
+
+  resetCcStyle(): void {
+    this.ccStyle.set({
+      fontSize: 18,
+      x: 0.5,
+      y: 0.85,
+      color: '#ffffff',
+      bgOpacity: 0.35,
+    });
+  }
+
+  // 新增：部分更新样式（用于设置面板的滑块）
+  patchCcStyle(patch: Partial<{ fontSize: number; x: number; y: number; color: string; bgOpacity: number }>): void {
+    this.ccStyle.set({ ...this.ccStyle(), ...patch } as any);
+  }
+
+  // 新增：应用预设样式
+  applyCcPreset(preset: 'white' | 'yellow' | 'green' | 'blue'): void {
+    const presets: Record<string, { color: string; bgOpacity: number }> = {
+      white: { color: '#ffffff', bgOpacity: 0.4 },
+      yellow: { color: '#ffe08a', bgOpacity: 0.45 },
+      green: { color: '#a7f3d0', bgOpacity: 0.4 },
+      blue: { color: '#7dd3fc', bgOpacity: 0.45 },
+    };
+    const p = presets[preset] || presets.white;
+    this.patchCcStyle(p);
+  }
+
+  private ccDragActive = false;
+  private ccResizeActive = false;
+  private ccStartClientX = 0;
+  private ccStartClientY = 0;
+  private ccStartX = 0.5;
+  private ccStartY = 0.85;
+  private ccStartFontSize = 18;
+
+  private playerRect(): DOMRect | null {
+    const el = this.playerContainer()?.nativeElement;
+    if (!el) return null;
+    try {
+      return el.getBoundingClientRect();
+    } catch {
+      return null;
+    }
+  }
+
+  ccDragStart(evt: MouseEvent): void {
+    if (!this.ccEnabled()) return;
+    if (evt.button !== 0) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+
+    const s: any = this.ccStyle();
+    this.ccDragActive = true;
+    this.ccResizeActive = false;
+    this.ccStartClientX = evt.clientX;
+    this.ccStartClientY = evt.clientY;
+    this.ccStartX = Number(s.x) || 0.5;
+    this.ccStartY = Number(s.y) || 0.85;
+  }
+
+  ccResizeStart(evt: MouseEvent): void {
+    if (!this.ccEnabled()) return;
+    if (evt.button !== 0) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+
+    const s: any = this.ccStyle();
+    this.ccResizeActive = true;
+    this.ccDragActive = false;
+    this.ccStartClientX = evt.clientX;
+    this.ccStartClientY = evt.clientY;
+    this.ccStartFontSize = Number(s.fontSize) || 18;
+  }
+
+  @HostListener('document:mousemove', ['$event'])
+  onCcDragMove(evt: MouseEvent): void {
+    if (!this.ccEnabled()) {
+      this.ccDragActive = false;
+      this.ccResizeActive = false;
+      return;
+    }
+
+    const rect = this.playerRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
+
+    if (this.ccDragActive) {
+      const dy = evt.clientY - this.ccStartClientY;
+      // 向下拖动时，y 值应该增加（因为 bottom 百分比变小表示更靠近底部）
+      // y 存储的是"距顶部的比例"，所以向下拖动（dy > 0）应该增加 y
+      const nextY = this.ccStartY + dy / rect.height;
+      this.ccStyle.set({
+        ...this.ccStyle(),
+        // 限制 y 在 0.5（画面中部）到 0.98（接近底部）之间
+        y: Math.max(0.5, Math.min(0.98, nextY)),
+      } as any);
+      return;
+    }
+
+    if (this.ccResizeActive) {
+      const dx = evt.clientX - this.ccStartClientX;
+      const dy = evt.clientY - this.ccStartClientY;
+      // 右下方向拖动增大字体，左上方向拖动减小字体
+      const delta = (dx - dy) / 8;
+      const next = Math.round(this.ccStartFontSize + delta);
+      this.ccStyle.set({
+        ...this.ccStyle(),
+        fontSize: Math.max(14, Math.min(56, next)),
+      } as any);
+    }
+  }
+
+  @HostListener('document:mouseup')
+  onCcDragEnd(): void {
+    this.ccDragActive = false;
+    this.ccResizeActive = false;
+  }
+
+  onCcWheel(evt: WheelEvent): void {
+    if (!this.ccEnabled()) return;
+    const target = evt.target as HTMLElement;
+    if (!target.closest('[data-cc-subtitle]')) return;
+    evt.preventDefault();
+    const delta = evt.deltaY > 0 ? -2 : 2;
+    const s = this.ccStyle();
+    this.ccStyle.set({ ...s, fontSize: Math.max(12, Math.min(72, (s.fontSize || 18) + delta)) } as any);
+  }
+
+  async translateSubtitlesToZh(): Promise<void> {
+    const m = this.media();
+    if (!m) return;
+
+    await this.tauri.ready();
+    if (!this.tauri.isTauri()) {
+      this.toast.warning('Web 预览模式暂不支持字幕翻译');
+      return;
+    }
+    if (!m.transcription) {
+      this.toast.warning('请先生成转写');
+      return;
+    }
+    if (this.translatingSubtitles()) return;
+
+    this.translatingSubtitles.set(true);
       try {
         const res = await this.backend.translateSubtitles(m.id, this.state.settings().ai, 'zh');
         this.subtitles.set(res);
         this.subtitleTrackId.set('zh');
         this.ccEnabled.set(true);
-        this.toast.success('已生成中文字幕');
+        const cov = (res as any)?.translation?.coverage;
+        if (typeof cov === 'number' && isFinite(cov)) {
+          const pct = Math.round(Math.max(0, Math.min(1, cov)) * 100);
+          if (pct >= 85) {
+            this.toast.success(`已生成中文字幕（覆盖率 ${pct}%）`);
+          } else {
+            this.toast.warning(`中文字幕已生成，但覆盖率仅 ${pct}%（其余仍为原文，可再试一次）`);
+          }
+        } else {
+          this.toast.success('已生成中文字幕');
+        }
       } catch (err: any) {
         console.error('translateSubtitles failed', err);
         this.toast.error(this.formatError(err) || '字幕翻译失败');
       } finally {
-        this.translatingSubtitles.set(false);
-      }
+      this.translatingSubtitles.set(false);
     }
+  }
 
-    openNoteEditor(noteId: string, event?: Event): void {
-      event?.preventDefault();
-      event?.stopPropagation();
-      const m = this.media();
-      if (!m) return;
-      const note = m.notes.find(n => n.id === noteId);
-      if (!note) return;
+  openNoteEditor(noteId: string, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const m = this.media();
+    if (!m) return;
+    const note = m.notes.find(n => n.id === noteId);
+    if (!note) return;
 
-      this.loadNoteIntoEditor(note);
-      this.noteDockedOpen.set(true);
-      this.noteEditorOpen.set(false);
-    }
+    this.loadNoteIntoEditor(note);
+    this.noteDockedOpen.set(true);
+    this.noteEditorOpen.set(false);
+  }
 
-    detachNoteEditor(): void {
-      if (!this.noteEditorId()) return;
-      this.noteDockedOpen.set(false);
-      this.noteEditorOpen.set(true);
+  detachNoteEditor(): void {
+    if (!this.noteEditorId()) return;
+    this.noteDockedOpen.set(false);
+    this.noteEditorOpen.set(true);
 
-      // Initialize position if needed.
-      if (this.noteEditorX() === 0 && this.noteEditorY() === 0) {
-        const vw = window.innerWidth || 1200;
-        const vh = window.innerHeight || 800;
-        const w = Math.max(520, Math.min(this.noteEditorW(), Math.floor(vw * 0.8)));
-        const h = Math.max(380, Math.min(this.noteEditorH(), Math.floor(vh * 0.7)));
-        this.noteEditorW.set(w);
-        this.noteEditorH.set(h);
-        const x = Math.max(12, Math.floor(vw - w - 24));
-        const y = Math.max(12, Math.floor(vh - h - 24));
-        this.noteEditorX.set(x);
-        this.noteEditorY.set(y);
-      }
-    }
-
-    dockNoteEditor(): void {
-      if (!this.noteEditorId()) return;
-      this.noteEditorOpen.set(false);
-      this.noteDockedOpen.set(true);
-      this.activeTab.set('notes');
-    }
-
-    closeDockedNoteEditor(): void {
-      this.flushNoteAutosave();
-      this.noteDockedOpen.set(false);
-      this.noteEditorId.set(null);
-    }
-
-    closeNoteEditor(event?: Event): void {
-      event?.preventDefault();
-      this.flushNoteAutosave();
-      this.noteEditorOpen.set(false);
-      this.noteDragActive = false;
-    }
-
-    private scheduleNoteAutosave(): void {
-      if (this.noteLoading) return;
-      const id = this.noteEditorId();
-      if (!id) return;
-      if (!(this.noteDockedOpen() || this.noteEditorOpen())) return;
-
-      if (this.noteAutosaveTimer) {
-        clearTimeout(this.noteAutosaveTimer);
-        this.noteAutosaveTimer = null;
-      }
-      this.noteAutosaving.set(true);
-      this.noteAutosaveTimer = setTimeout(() => {
-        this.noteAutosaveTimer = null;
-        this.flushNoteAutosave();
-      }, 450);
-    }
-
-    flushNoteAutosave(): void {
-      if (this.noteAutosaveTimer) {
-        clearTimeout(this.noteAutosaveTimer);
-        this.noteAutosaveTimer = null;
-      }
-      const m = this.media();
-      if (!m) return;
-      const noteId = this.noteEditorId();
-      if (!noteId) return;
-      if (this.noteLoading) return;
-      if (!(this.noteDockedOpen() || this.noteEditorOpen())) return;
-
-      const title = (this.noteEditorTitle() || '').trim() || '新笔记';
-      const content = (this.noteEditorContent() || '').toString();
-      const ts = this.noteEditorTimestamp();
-
-      this.state.updateNote(m.id, noteId, {
-        title,
-        content,
-        timestamp: ts === null ? undefined : ts,
-      });
-      this.noteAutosaving.set(false);
-      this.noteAutosavedAt.set(Date.now());
-    }
-
-    private loadNoteIntoEditor(note: MediaNote): void {
-      this.noteLoading = true;
-      this.noteEditorId.set(note.id);
-      this.noteEditorTitle.set(note.title || '');
-      this.noteEditorContent.set(note.content || '');
-      this.noteEditorTimestamp.set(typeof note.timestamp === 'number' ? note.timestamp : null);
-      this.noteAutosaving.set(false);
-      this.noteAutosavedAt.set(Date.now());
-      setTimeout(() => {
-        this.noteLoading = false;
-      }, 0);
-    }
-
-    async deleteNoteFromEditor(): Promise<void> {
-      const m = this.media();
-      if (!m) return;
-      const noteId = this.noteEditorId();
-      if (!noteId) return;
-      const note = m.notes.find(n => n.id === noteId);
-      const ok = await this.confirm.confirm({
-        title: '删除笔记',
-        message: `确定要删除 “${note?.title || '笔记'}” 吗？`,
-        confirmText: '删除',
-        cancelText: '取消',
-        danger: true,
-      });
-      if (!ok) return;
-      this.state.deleteNote(m.id, noteId);
-      this.toast.success('已删除');
-      this.noteDockedOpen.set(false);
-      this.noteEditorOpen.set(false);
-      this.noteEditorId.set(null);
-    }
-
-    applyCurrentTimeToNote(): void {
-      const ts = Number(this.currentTime());
-      if (Number.isFinite(ts) && ts >= 0) {
-        this.noteEditorTimestamp.set(ts);
-      }
-    }
-
-    noteEditorDragStart(evt: MouseEvent): void {
-      if (evt.button !== 0) return;
-      this.noteDragActive = true;
-      this.noteDragOffsetX = evt.clientX - this.noteEditorX();
-      this.noteDragOffsetY = evt.clientY - this.noteEditorY();
-    }
-
-    @HostListener('document:mousemove', ['$event'])
-    onNoteEditorDragMove(evt: MouseEvent): void {
-      if (!this.noteEditorOpen() || !this.noteDragActive) return;
+    // Initialize position if needed.
+    if (this.noteEditorX() === 0 && this.noteEditorY() === 0) {
       const vw = window.innerWidth || 1200;
       const vh = window.innerHeight || 800;
-
-      const x = evt.clientX - this.noteDragOffsetX;
-      const y = evt.clientY - this.noteDragOffsetY;
-
-      const w = this.noteEditorW();
-      const h = this.noteEditorH();
-      const clampedX = Math.max(8, Math.min(vw - Math.max(80, w) - 8, x));
-      const clampedY = Math.max(8, Math.min(vh - Math.max(80, h) - 8, y));
-      this.noteEditorX.set(clampedX);
-      this.noteEditorY.set(clampedY);
+      const w = Math.max(520, Math.min(this.noteEditorW(), Math.floor(vw * 0.8)));
+      const h = Math.max(380, Math.min(this.noteEditorH(), Math.floor(vh * 0.7)));
+      this.noteEditorW.set(w);
+      this.noteEditorH.set(h);
+      const x = Math.max(12, Math.floor(vw - w - 24));
+      const y = Math.max(12, Math.floor(vh - h - 24));
+      this.noteEditorX.set(x);
+      this.noteEditorY.set(y);
     }
+  }
 
-    @HostListener('document:mouseup')
-    onNoteEditorDragEnd(): void {
-      this.noteDragActive = false;
+  dockNoteEditor(): void {
+    if (!this.noteEditorId()) return;
+    this.noteEditorOpen.set(false);
+    this.noteDockedOpen.set(true);
+    this.activeTab.set('notes');
+  }
 
-      // Persist size after manual resize.
-      if (this.noteEditorOpen()) {
-        const el = this.noteEditorBox()?.nativeElement;
-        if (el) {
-          const r = el.getBoundingClientRect();
-          const w = Math.max(420, Math.min(window.innerWidth - 16, Math.round(r.width)));
-          const h = Math.max(320, Math.min(window.innerHeight - 16, Math.round(r.height)));
-          this.noteEditorW.set(w);
-          this.noteEditorH.set(h);
-        }
+  closeDockedNoteEditor(): void {
+    this.flushNoteAutosave();
+    this.noteDockedOpen.set(false);
+    this.noteEditorId.set(null);
+  }
+
+  closeNoteEditor(event?: Event): void {
+    event?.preventDefault();
+    this.flushNoteAutosave();
+    this.noteEditorOpen.set(false);
+    this.noteDragActive = false;
+  }
+
+  private scheduleNoteAutosave(): void {
+    if (this.noteLoading) return;
+    const id = this.noteEditorId();
+    if (!id) return;
+    if (!(this.noteDockedOpen() || this.noteEditorOpen())) return;
+
+    if (this.noteAutosaveTimer) {
+      clearTimeout(this.noteAutosaveTimer);
+      this.noteAutosaveTimer = null;
+    }
+    this.noteAutosaving.set(true);
+    this.noteAutosaveTimer = setTimeout(() => {
+      this.noteAutosaveTimer = null;
+      this.flushNoteAutosave();
+    }, 450);
+  }
+
+  flushNoteAutosave(): void {
+    if (this.noteAutosaveTimer) {
+      clearTimeout(this.noteAutosaveTimer);
+      this.noteAutosaveTimer = null;
+    }
+    const m = this.media();
+    if (!m) return;
+    const noteId = this.noteEditorId();
+    if (!noteId) return;
+    if (this.noteLoading) return;
+    if (!(this.noteDockedOpen() || this.noteEditorOpen())) return;
+
+    const title = (this.noteEditorTitle() || '').trim() || '新笔记';
+    const content = (this.noteEditorContent() || '').toString();
+    const ts = this.noteEditorTimestamp();
+
+    this.state.updateNote(m.id, noteId, {
+      title,
+      content,
+      timestamp: ts === null ? undefined : ts,
+    });
+    this.noteAutosaving.set(false);
+    this.noteAutosavedAt.set(Date.now());
+  }
+
+  private loadNoteIntoEditor(note: MediaNote): void {
+    this.noteLoading = true;
+    this.noteEditorId.set(note.id);
+    this.noteEditorTitle.set(note.title || '');
+    this.noteEditorContent.set(note.content || '');
+    this.noteEditorTimestamp.set(typeof note.timestamp === 'number' ? note.timestamp : null);
+    this.noteAutosaving.set(false);
+    this.noteAutosavedAt.set(Date.now());
+    setTimeout(() => {
+      this.noteLoading = false;
+    }, 0);
+  }
+
+  async deleteNoteFromEditor(): Promise<void> {
+    const m = this.media();
+    if (!m) return;
+    const noteId = this.noteEditorId();
+    if (!noteId) return;
+    const note = m.notes.find(n => n.id === noteId);
+    const ok = await this.confirm.confirm({
+      title: '删除笔记',
+      message: `确定要删除 “${note?.title || '笔记'}” 吗？`,
+      confirmText: '删除',
+      cancelText: '取消',
+      danger: true,
+    });
+    if (!ok) return;
+    this.state.deleteNote(m.id, noteId);
+    this.toast.success('已删除');
+    this.noteDockedOpen.set(false);
+    this.noteEditorOpen.set(false);
+    this.noteEditorId.set(null);
+  }
+
+  applyCurrentTimeToNote(): void {
+    const ts = Number(this.currentTime());
+    if (Number.isFinite(ts) && ts >= 0) {
+      this.noteEditorTimestamp.set(ts);
+    }
+  }
+
+  noteEditorDragStart(evt: MouseEvent): void {
+    if (evt.button !== 0) return;
+    this.noteDragActive = true;
+    this.noteDragOffsetX = evt.clientX - this.noteEditorX();
+    this.noteDragOffsetY = evt.clientY - this.noteEditorY();
+  }
+
+  @HostListener('document:mousemove', ['$event'])
+  onNoteEditorDragMove(evt: MouseEvent): void {
+    if (!this.noteEditorOpen() || !this.noteDragActive) return;
+    const vw = window.innerWidth || 1200;
+    const vh = window.innerHeight || 800;
+
+    const x = evt.clientX - this.noteDragOffsetX;
+    const y = evt.clientY - this.noteDragOffsetY;
+
+    const w = this.noteEditorW();
+    const h = this.noteEditorH();
+    const clampedX = Math.max(8, Math.min(vw - Math.max(80, w) - 8, x));
+    const clampedY = Math.max(8, Math.min(vh - Math.max(80, h) - 8, y));
+    this.noteEditorX.set(clampedX);
+    this.noteEditorY.set(clampedY);
+  }
+
+  @HostListener('document:mouseup')
+  onNoteEditorDragEnd(): void {
+    this.noteDragActive = false;
+
+    // Persist size after manual resize.
+    if (this.noteEditorOpen()) {
+      const el = this.noteEditorBox()?.nativeElement;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        const w = Math.max(420, Math.min(window.innerWidth - 16, Math.round(r.width)));
+        const h = Math.max(320, Math.min(window.innerHeight - 16, Math.round(r.height)));
+        this.noteEditorW.set(w);
+        this.noteEditorH.set(h);
       }
     }
+  }
 
-   startTagEdit(event?: Event): void {
-      event?.preventDefault();
-      event?.stopPropagation();
-      this.tagEditing.set(true);
+  startTagEdit(event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.tagEditing.set(true);
+  }
+
+  cancelTagEdit(event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.tagDraft.set('');
+    this.tagEditing.set(false);
+  }
+
+
+  addTagFromDraft(event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const m = this.media();
+    if (!m) return;
+
+    const raw = (this.tagDraft() || '').trim();
+    if (!raw) return;
+
+    // Allow comma/Chinese comma separated input.
+    const parts = raw
+      .split(/[,，\n]/g)
+      .map(s => s.trim())
+      .filter(s => !!s);
+
+    if (parts.length === 0) return;
+
+    const existing = Array.isArray(m.tags) ? m.tags : [];
+    const next: string[] = [];
+    for (const t of existing) {
+      const x = (t || '').trim();
+      if (x && !next.includes(x)) next.push(x);
+    }
+    for (const t of parts) {
+      if (!next.includes(t)) next.push(t);
     }
 
-   cancelTagEdit(event?: Event): void {
-      event?.preventDefault();
-      event?.stopPropagation();
-      this.tagDraft.set('');
-      this.tagEditing.set(false);
-   }
+    this.state.updateMediaItem(m.id, { tags: next });
+    this.tagDraft.set('');
+    this.tagEditing.set(false);
+  }
 
+  removeTag(tag: string, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const m = this.media();
+    if (!m) return;
+    const next = (m.tags || []).filter(t => t !== tag);
+    this.state.updateMediaItem(m.id, { tags: next });
+  }
 
-   addTagFromDraft(event?: Event): void {
-      event?.preventDefault();
-      event?.stopPropagation();
-      const m = this.media();
-      if (!m) return;
+  bookmarkEditingId = signal<string | null>(null);
+  bookmarkDraft = signal('');
 
-      const raw = (this.tagDraft() || '').trim();
-      if (!raw) return;
-
-      // Allow comma/Chinese comma separated input.
-      const parts = raw
-        .split(/[,，\n]/g)
-        .map(s => s.trim())
-        .filter(s => !!s);
-
-      if (parts.length === 0) return;
-
-      const existing = Array.isArray(m.tags) ? m.tags : [];
-      const next: string[] = [];
-      for (const t of existing) {
-        const x = (t || '').trim();
-        if (x && !next.includes(x)) next.push(x);
-      }
-      for (const t of parts) {
-        if (!next.includes(t)) next.push(t);
-      }
-
-      this.state.updateMediaItem(m.id, { tags: next });
-      this.tagDraft.set('');
-      this.tagEditing.set(false);
-   }
-
-    removeTag(tag: string, event?: Event): void {
-       event?.preventDefault();
-       event?.stopPropagation();
-       const m = this.media();
-       if (!m) return;
-       const next = (m.tags || []).filter(t => t !== tag);
-       this.state.updateMediaItem(m.id, { tags: next });
-    }
-
-    bookmarkEditingId = signal<string | null>(null);
-    bookmarkDraft = signal('');
-
-    beginEditBookmark(bm: Bookmark, event?: Event): void {
-      event?.preventDefault();
-      event?.stopPropagation();
-      const id = (bm?.id || '').trim();
-      if (!id) return;
-      this.bookmarkEditingId.set(id);
-      this.bookmarkDraft.set((bm.label || '').trim());
-      setTimeout(() => {
-        try {
-          const el = document.querySelector<HTMLInputElement>('input[data-bookmark-edit="1"]');
-          el?.focus();
-          el?.select();
-        } catch {}
-      }, 0);
-    }
-
-    cancelEditBookmark(event?: Event): void {
-      event?.preventDefault();
-      event?.stopPropagation();
-      this.bookmarkEditingId.set(null);
-      this.bookmarkDraft.set('');
-    }
-
-    commitEditBookmark(bm: Bookmark, event?: Event): void {
-      event?.preventDefault();
-      event?.stopPropagation();
-      const m = this.media();
-      if (!m) return;
-      const id = (bm?.id || '').trim();
-      if (!id) return;
-      const next = (this.bookmarkDraft() || '').trim();
-      if (!next) {
-        this.toast.warning('书签标题不能为空');
-        return;
-      }
-      this.state.updateBookmark(m.id, id, { label: next });
-      this.bookmarkEditingId.set(null);
-      this.bookmarkDraft.set('');
-    }
-
-    bookmarkSnippet(timestamp: number): string {
-      const m = this.media();
-      const segs = m?.transcription?.segments || [];
-      if (!segs.length) return '';
-      const ts = Number(timestamp);
-      if (!Number.isFinite(ts)) return '';
-
-      // Prefer the segment that contains ts; otherwise pick the closest by start time.
-      let best = segs[0];
-      let bestScore = Number.POSITIVE_INFINITY;
-      for (const s of segs) {
-        const st = Number(s.start);
-        const en = Number(s.end);
-        if (!Number.isFinite(st) || !Number.isFinite(en)) continue;
-        if (st <= ts && ts <= en) {
-          best = s;
-          bestScore = -1;
-          break;
-        }
-        const d = Math.abs(st - ts);
-        if (d < bestScore) {
-          best = s;
-          bestScore = d;
-        }
-      }
-      const text = (best?.text || '').trim();
-      if (!text) return '';
-      return text.length > 90 ? text.slice(0, 90) + '…' : text;
-    }
-
-   async deleteNote(noteId: string, event?: Event): Promise<void> {
-      event?.preventDefault();
-      event?.stopPropagation();
-      const m = this.media();
-      if (!m) return;
-      const ok = await this.confirm.confirm({
-        title: '删除笔记',
-        message: '确定要删除这条笔记吗？',
-        confirmText: '删除',
-        cancelText: '取消',
-        danger: true,
-      });
-      if (!ok) return;
-      this.state.deleteNote(m.id, noteId);
-   }
- 
-   deleteBookmark(id: string) {
-      const m = this.media();
-      if (m) this.state.deleteBookmark(m.id, id);
-   }
-
-   toggleMoreMenu(event: MouseEvent): void {
-      event.preventDefault();
-      event.stopPropagation();
-      this.moreMenuOpen.update(v => !v);
-   }
-
-   async deleteMedia(): Promise<void> {
-      const m = this.media();
-      if (!m) return;
-
-      const ok = await this.confirm.confirm({
-         title: '移入回收站',
-         message: `确定要删除 "${m.name}" 吗？`,
-         confirmText: '删除',
-         cancelText: '取消',
-         danger: true,
-      });
-      if (!ok) return;
-
-      this.state.deleteMediaItem(m.id);
-      this.toast.success('已移入回收站');
-      void this.router.navigate(['/media']);
-   }
-
-   async exportMedia(): Promise<void> {
-      const m = this.media();
-      if (!m) return;
-
-      if (this.exporting()) return;
-      this.exporting.set(true);
+  beginEditBookmark(bm: Bookmark, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const id = (bm?.id || '').trim();
+    if (!id) return;
+    this.bookmarkEditingId.set(id);
+    this.bookmarkDraft.set((bm.label || '').trim());
+    setTimeout(() => {
       try {
-         await this.tauri.ready();
-         if (!this.tauri.isTauri()) {
-            this.toast.warning('Web 预览模式暂不支持导出');
-            return;
-         }
+        const el = document.querySelector<HTMLInputElement>('input[data-bookmark-edit="1"]');
+        el?.focus();
+        el?.select();
+      } catch { }
+    }, 0);
+  }
 
-         let exportBase: string | undefined = undefined;
-         try {
-           const dialog = await import('@tauri-apps/plugin-dialog');
-           const picked = await dialog.open({ directory: true, multiple: false, title: '选择导出目录' } as any);
-           if (!picked) {
-             return;
-           }
-           exportBase = Array.isArray(picked) ? (picked[0] as any) : (picked as any);
-         } catch {
-           // dialog not available; fallback to default export location
-         }
+  cancelEditBookmark(event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.bookmarkEditingId.set(null);
+    this.bookmarkDraft.set('');
+  }
 
-         const res = await this.backend.exportMedia(m.id, exportBase);
-         this.toast.success(`已导出到：${res.export_dir}`);
-      } catch (err: any) {
-         console.error('exportMedia failed', err);
-         this.toast.error(this.formatError(err) || '导出失败');
-      } finally {
-         this.exporting.set(false);
+  commitEditBookmark(bm: Bookmark, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const m = this.media();
+    if (!m) return;
+    const id = (bm?.id || '').trim();
+    if (!id) return;
+    const next = (this.bookmarkDraft() || '').trim();
+    if (!next) {
+      this.toast.warning('书签标题不能为空');
+      return;
+    }
+    this.state.updateBookmark(m.id, id, { label: next });
+    this.bookmarkEditingId.set(null);
+    this.bookmarkDraft.set('');
+  }
+
+  bookmarkSnippet(timestamp: number): string {
+    const m = this.media();
+    const segs = m?.transcription?.segments || [];
+    if (!segs.length) return '';
+    const ts = Number(timestamp);
+    if (!Number.isFinite(ts)) return '';
+
+    // Prefer the segment that contains ts; otherwise pick the closest by start time.
+    let best = segs[0];
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (const s of segs) {
+      const st = Number(s.start);
+      const en = Number(s.end);
+      if (!Number.isFinite(st) || !Number.isFinite(en)) continue;
+      if (st <= ts && ts <= en) {
+        best = s;
+        bestScore = -1;
+        break;
       }
-     }
-
-    async openStorageLocation(): Promise<void> {
-       const m = this.media();
-       if (!m) return;
-
-       try {
-         await this.tauri.ready();
-         if (!this.tauri.isTauri()) {
-           this.toast.warning('Web 预览模式暂不支持打开存储位置');
-           return;
-         }
-
-         await this.backend.revealMediaDir(m.id);
-       } catch (err: any) {
-         console.error('openStorageLocation failed', err);
-         const msg = this.formatError(err) || '打开存储位置失败';
-         this.toast.error(msg);
-         try {
-           const info = await this.backend.getMediaStorageInfo(m.id);
-           if (info?.media_dir) {
-             this.toast.info(`存储目录：${info.media_dir}`);
-           }
-         } catch {
-           // ignore
-         }
-       }
-     }
-
-    openTranscriptionDialog(): void {
-      const t = this.state.settings().transcription;
-      this.transcriptionDraft.set({
-         language: t.language,
-         localAccelerator: t.localAccelerator,
-         numThreads: t.numThreads,
-         useItn: t.useItn,
-      });
-      this.transcriptionDialogOpen.set(true);
+      const d = Math.abs(st - ts);
+      if (d < bestScore) {
+        best = s;
+        bestScore = d;
+      }
     }
+    const text = (best?.text || '').trim();
+    if (!text) return '';
+    return text.length > 90 ? text.slice(0, 90) + '…' : text;
+  }
 
-     async openExternalUrl(url: string, evt?: Event): Promise<void> {
-       evt?.preventDefault();
-       evt?.stopPropagation();
-       const u = (url || '').trim();
-       if (!u) return;
+  async deleteNote(noteId: string, event?: Event): Promise<void> {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const m = this.media();
+    if (!m) return;
+    const ok = await this.confirm.confirm({
+      title: '删除笔记',
+      message: '确定要删除这条笔记吗？',
+      confirmText: '删除',
+      cancelText: '取消',
+      danger: true,
+    });
+    if (!ok) return;
+    this.state.deleteNote(m.id, noteId);
+  }
 
-       await this.tauri.ready();
-       if (!this.tauri.isTauri()) {
-         window.open(u, '_blank', 'noopener,noreferrer');
-         return;
-       }
+  deleteBookmark(id: string) {
+    const m = this.media();
+    if (m) this.state.deleteBookmark(m.id, id);
+  }
 
-       // Desktop: try shell plugin, fallback to window.open
-       try {
-         const shell = await import('@tauri-apps/plugin-shell');
-         await shell.open(u as any);
-       } catch {
-         window.open(u, '_blank', 'noopener,noreferrer');
-       }
-     }
+  toggleMoreMenu(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.moreMenuOpen.update(v => !v);
+  }
 
-    formatDateTime(iso: string | undefined | null): string {
-      if (!iso) return '';
-      const d = new Date(iso);
-      if (Number.isNaN(d.getTime())) return iso;
-      return d.toLocaleString();
-    }
+  async deleteMedia(): Promise<void> {
+    const m = this.media();
+    if (!m) return;
 
-    closeTranscriptionDialog(): void {
-      this.transcriptionDialogOpen.set(false);
-    }
+    const ok = await this.confirm.confirm({
+      title: '移入回收站',
+      message: `确定要删除 "${m.name}" 吗？`,
+      confirmText: '删除',
+      cancelText: '取消',
+      danger: true,
+    });
+    if (!ok) return;
 
-    async startTranscriptionFromDialog(): Promise<void> {
-      const draft = this.transcriptionDraft();
-      this.transcriptionDialogOpen.set(false);
-      await this.runTranscription(draft);
-    }
+    this.state.deleteMediaItem(m.id);
+    this.toast.success('已移入回收站');
+    void this.router.navigate(['/media']);
+  }
 
-    async runTranscription(override?: Partial<AppSettings['transcription']>): Promise<void> {
-      const m = this.media();
-      if (!m) return;
+  async exportMedia(): Promise<void> {
+    const m = this.media();
+    if (!m) return;
+
+    if (this.exporting()) return;
+    this.exporting.set(true);
+    try {
       await this.tauri.ready();
       if (!this.tauri.isTauri()) {
-        this.toast.warning('Web 预览模式暂不支持转写');
+        this.toast.warning('Web 预览模式暂不支持导出');
         return;
       }
-      if (this.transcribing()) return;
 
-      const cfg: AppSettings['transcription'] = {
-         ...this.state.settings().transcription,
-         ...(override || {}),
-      };
-
-      this.transcribing.set(true);
-      this.state.updateMediaItem(m.id, { status: 'transcribing' });
+      let exportBase: string | undefined = undefined;
       try {
-         const res = await this.backend.transcribeMedia(m.id, cfg);
-         this.state.setTranscription(m.id, res.transcription);
-         this.state.updateMediaItem(m.id, { status: 'ready' });
-         this.toast.success('转写完成');
-      } catch (err: any) {
-         console.error('transcribeMedia failed', err);
-         this.state.updateMediaItem(m.id, { status: 'error' });
-         this.toast.error(this.formatError(err) || '转写失败');
-      } finally {
-         this.transcribing.set(false);
+        const dialog = await import('@tauri-apps/plugin-dialog');
+        const picked = await dialog.open({ directory: true, multiple: false, title: '选择导出目录' } as any);
+        if (!picked) {
+          return;
+        }
+        exportBase = Array.isArray(picked) ? (picked[0] as any) : (picked as any);
+      } catch {
+        // dialog not available; fallback to default export location
       }
-    }
 
-    async runSummary(): Promise<void> {
-      const m = this.media();
-      if (!m) return;
-      if (!m.transcription) {
-         this.toast.warning('请先生成转写');
-         this.activeTab.set('transcript');
-         return;
-      }
+      const res = await this.backend.exportMedia(m.id, exportBase);
+      this.toast.success(`已导出到：${res.export_dir}`);
+    } catch (err: any) {
+      console.error('exportMedia failed', err);
+      this.toast.error(this.formatError(err) || '导出失败');
+    } finally {
+      this.exporting.set(false);
+    }
+  }
+
+  async openStorageLocation(): Promise<void> {
+    const m = this.media();
+    if (!m) return;
+
+    try {
       await this.tauri.ready();
       if (!this.tauri.isTauri()) {
-        this.toast.warning('Web 预览模式暂不支持 AI 总结');
-        return;
-      }
-      if (this.summarizing()) return;
-
-       this.summarizing.set(true);
-       this.state.updateMediaItem(m.id, { status: 'processing' });
-       try {
-         const ai = this.state.settings().ai;
-         const pid = this.summaryPromptId();
-         const tpl = (ai.summaryPrompts || []).find(p => p.id === pid)?.template || '';
-         const res = await this.backend.summarizeMedia(m.id, ai, { promptId: pid, promptTemplate: tpl });
-         this.state.setAISummary(m.id, res.summary);
-         this.state.updateMediaItem(m.id, { status: 'ready' });
-         this.toast.success('AI 总结生成完成');
-       } catch (err: any) {
-         console.error('summarizeMedia failed', err);
-         this.state.updateMediaItem(m.id, { status: 'error' });
-         this.toast.error(this.formatError(err) || 'AI 总结失败');
-      } finally {
-         this.summarizing.set(false);
-     }
-    }
-
-    private extractMermaidBlocks(markdown: string): Array<{ start: number; end: number; code: string }> {
-      const md = (markdown || '').toString();
-      const re = /```mermaid\s*\n([\s\S]*?)```/g;
-      const out: Array<{ start: number; end: number; code: string }> = [];
-      for (const m of md.matchAll(re) as any) {
-        const full = m[0] as string;
-        const code = (m[1] as string) || '';
-        const idx = (m.index as number) || 0;
-        out.push({ start: idx, end: idx + full.length, code: code.trim() });
-      }
-      return out;
-    }
-
-    private replaceMermaidBlockAtIndex(markdown: string, index: number, newCode: string): string {
-      const md = (markdown || '').toString();
-      const blocks = this.extractMermaidBlocks(md);
-      if (index < 0 || index >= blocks.length) return md;
-      const b = blocks[index];
-      const fenced = `\n\n\`\`\`mermaid\n${(newCode || '').trim()}\n\`\`\`\n\n`;
-      return md.slice(0, b.start) + fenced + md.slice(b.end);
-    }
-
-    async regenerateSummaryDiagram(kind: 'timeline' | 'mindmap'): Promise<void> {
-      const m = this.media();
-      if (!m) return;
-      if (!m.transcription) {
-        this.toast.warning('请先生成转写');
-        this.activeTab.set('transcript');
-        return;
-      }
-      if (!m.summary) {
-        this.toast.warning('请先生成总结');
+        this.toast.warning('Web 预览模式暂不支持打开存储位置');
         return;
       }
 
-      await this.tauri.ready();
-      if (!this.tauri.isTauri()) {
-        this.toast.warning('Web 预览模式暂不支持 AI 总结');
-        return;
-      }
-      if (this.summarizing() || this.summaryRunning() || this.summaryRegenerating()) return;
-
-      this.summaryRegenerating.set(kind);
+      await this.backend.revealMediaDir(m.id);
+    } catch (err: any) {
+      console.error('openStorageLocation failed', err);
+      const msg = this.formatError(err) || '打开存储位置失败';
+      this.toast.error(msg);
       try {
-        const ai = this.state.settings().ai;
-        const diagramSpec = kind === 'timeline'
-          ? "Narrative Timeline (time-driven). Use mermaid flowchart. MUST start with: flowchart LR. Do NOT use gantt."
-          : "Logic Mind Map (logic-driven). Use mermaid mindmap. MUST start with: mindmap.";
+        const info = await this.backend.getMediaStorageInfo(m.id);
+        if (info?.media_dir) {
+          this.toast.info(`存储目录：${info.media_dir}`);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
 
-        const basePrompt = `You are regenerating ONE mermaid diagram for a media transcript summary.\n\n\
+  openTranscriptionDialog(): void {
+    const t = this.state.settings().transcription;
+    this.transcriptionDraft.set({
+      language: t.language,
+      localAccelerator: t.localAccelerator,
+      numThreads: t.numThreads,
+      useItn: t.useItn,
+    });
+    this.transcriptionDialogOpen.set(true);
+  }
+
+  async openExternalUrl(url: string, evt?: Event): Promise<void> {
+    evt?.preventDefault();
+    evt?.stopPropagation();
+    const u = (url || '').trim();
+    if (!u) return;
+
+    await this.tauri.ready();
+    if (!this.tauri.isTauri()) {
+      window.open(u, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    // Desktop: try shell plugin, fallback to window.open
+    try {
+      const shell = await import('@tauri-apps/plugin-shell');
+      await shell.open(u as any);
+    } catch {
+      window.open(u, '_blank', 'noopener,noreferrer');
+    }
+  }
+
+  formatDateTime(iso: string | undefined | null): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString();
+  }
+
+  closeTranscriptionDialog(): void {
+    this.transcriptionDialogOpen.set(false);
+  }
+
+  async startTranscriptionFromDialog(): Promise<void> {
+    const draft = this.transcriptionDraft();
+    this.transcriptionDialogOpen.set(false);
+    await this.runTranscription(draft);
+  }
+
+  async runTranscription(override?: Partial<AppSettings['transcription']>): Promise<void> {
+    const m = this.media();
+    if (!m) return;
+    await this.tauri.ready();
+    if (!this.tauri.isTauri()) {
+      this.toast.warning('Web 预览模式暂不支持转写');
+      return;
+    }
+    if (this.transcribing()) return;
+
+    const cfg: AppSettings['transcription'] = {
+      ...this.state.settings().transcription,
+      ...(override || {}),
+    };
+
+    this.transcribing.set(true);
+    this.state.updateMediaItem(m.id, { status: 'transcribing' });
+    try {
+      const res = await this.backend.transcribeMedia(m.id, cfg);
+      this.state.setTranscription(m.id, res.transcription);
+      this.state.updateMediaItem(m.id, { status: 'ready' });
+      this.toast.success('转写完成');
+    } catch (err: any) {
+      console.error('transcribeMedia failed', err);
+      this.state.updateMediaItem(m.id, { status: 'error' });
+      this.toast.error(this.formatError(err) || '转写失败');
+    } finally {
+      this.transcribing.set(false);
+    }
+  }
+
+  async runSummary(): Promise<void> {
+    const m = this.media();
+    if (!m) return;
+    if (!m.transcription) {
+      this.toast.warning('请先生成转写');
+      this.activeTab.set('transcript');
+      return;
+    }
+    await this.tauri.ready();
+    if (!this.tauri.isTauri()) {
+      this.toast.warning('Web 预览模式暂不支持 AI 总结');
+      return;
+    }
+    if (this.summarizing()) return;
+
+    this.summarizing.set(true);
+    this.state.updateMediaItem(m.id, { status: 'processing' });
+    try {
+      const ai = this.state.settings().ai;
+      const pid = this.summaryPromptId();
+      const tpl = (ai.summaryPrompts || []).find(p => p.id === pid)?.template || '';
+      const res = await this.backend.summarizeMedia(m.id, ai, { promptId: pid, promptTemplate: tpl, userLang: this.config.lang() });
+      this.state.setAISummary(m.id, res.summary);
+      this.state.updateMediaItem(m.id, { status: 'ready' });
+      this.toast.success('AI 总结生成完成');
+    } catch (err: any) {
+      console.error('summarizeMedia failed', err);
+      this.state.updateMediaItem(m.id, { status: 'error' });
+      this.toast.error(this.formatError(err) || 'AI 总结失败');
+    } finally {
+      this.summarizing.set(false);
+    }
+  }
+
+  private extractMermaidBlocks(markdown: string): Array<{ start: number; end: number; code: string }> {
+    const md = (markdown || '').toString();
+    const re = /```mermaid\s*\n([\s\S]*?)```/g;
+    const out: Array<{ start: number; end: number; code: string }> = [];
+    for (const m of md.matchAll(re) as any) {
+      const full = m[0] as string;
+      const code = (m[1] as string) || '';
+      const idx = (m.index as number) || 0;
+      out.push({ start: idx, end: idx + full.length, code: code.trim() });
+    }
+    return out;
+  }
+
+  private replaceMermaidBlockAtIndex(markdown: string, index: number, newCode: string): string {
+    const md = (markdown || '').toString();
+    const blocks = this.extractMermaidBlocks(md);
+    if (index < 0 || index >= blocks.length) return md;
+    const b = blocks[index];
+    const fenced = `\n\n\`\`\`mermaid\n${(newCode || '').trim()}\n\`\`\`\n\n`;
+    return md.slice(0, b.start) + fenced + md.slice(b.end);
+  }
+
+  async regenerateSummaryDiagram(kind: 'timeline' | 'mindmap'): Promise<void> {
+    const m = this.media();
+    if (!m) return;
+    if (!m.transcription) {
+      this.toast.warning('请先生成转写');
+      this.activeTab.set('transcript');
+      return;
+    }
+    if (!m.summary) {
+      this.toast.warning('请先生成总结');
+      return;
+    }
+
+    await this.tauri.ready();
+    if (!this.tauri.isTauri()) {
+      this.toast.warning('Web 预览模式暂不支持 AI 总结');
+      return;
+    }
+    if (this.summarizing() || this.summaryRunning() || this.summaryRegenerating()) return;
+
+    this.summaryRegenerating.set(kind);
+    try {
+      const ai = this.state.settings().ai;
+      const diagramSpec = kind === 'timeline'
+        ? "Narrative Timeline (time-driven). Use mermaid gantt. MUST start with: gantt. Use base date 2020-01-01 with dateFormat YYYY-MM-DD HH:mm:ss. Avoid ':' and ',' in task names."
+        : "Logic Mind Map (logic-driven). Use mermaid mindmap. MUST start with: mindmap. Keep nodes short; avoid arrows and brackets.";
+
+      const basePrompt = `You are regenerating ONE mermaid diagram for a media transcript summary.\n\n\
 Return ONLY JSON (no code fences).\n\
 Schema: { \\\"content\\\": string (markdown) }\n\n\
 Rules:\n\
@@ -3177,135 +3512,135 @@ Rules:\n\
 - If using timestamps in labels, use [MM:SS].\n\n\
 Input (transcript):\n\n{{input}}\n`;
 
-        const pid = this.summaryPromptId();
-        const res = await this.backend.summarizeMedia(m.id, ai, { promptId: pid, promptTemplate: basePrompt });
-        const newMd = res?.summary?.content || '';
-        const newBlocks = this.extractMermaidBlocks(newMd);
-        if (newBlocks.length < 1) {
-          this.toast.error('重生成失败：未返回 mermaid 代码块');
-          return;
-        }
-
-        const targetIdx = kind === 'timeline' ? 0 : 1;
-        const cur = m.summary.content || '';
-        const curBlocks = this.extractMermaidBlocks(cur);
-
-        let patched = cur;
-        if (curBlocks.length >= 2) {
-          patched = this.replaceMermaidBlockAtIndex(cur, targetIdx, newBlocks[0].code);
-        } else {
-          const heading = kind === 'timeline' ? '### Narrative Timeline' : '### Logic Mind Map';
-          patched = `${cur.trim()}\n\n${heading}\n\n\`\`\`mermaid\n${newBlocks[0].code}\n\`\`\`\n`;
-        }
-
-        const updated = {
-          ...m.summary,
-          content: patched,
-          generatedAt: new Date().toISOString(),
-          promptUsed: `${m.summary.promptUsed || ''}|regen:${kind}`.replace(/^\|+/, ''),
-        };
-        this.state.setAISummary(m.id, updated);
-        this.toast.success(kind === 'timeline' ? '时间轴已重生成' : '思维导图已重生成');
-      } catch (err: any) {
-        console.error('regenerateSummaryDiagram failed', err);
-        this.toast.error(this.formatError(err) || '重生成失败');
-      } finally {
-        this.summaryRegenerating.set(null);
-      }
-    }
-
-    async runOptimizeTranscription(): Promise<void> {
-      const m = this.media();
-      if (!m) return;
-      if (!m.transcription) {
-        this.toast.warning('请先生成转写');
-        this.activeTab.set('transcript');
+      const pid = this.summaryPromptId();
+      const res = await this.backend.summarizeMedia(m.id, ai, { promptId: pid, promptTemplate: basePrompt });
+      const newMd = res?.summary?.content || '';
+      const newBlocks = this.extractMermaidBlocks(newMd);
+      if (newBlocks.length < 1) {
+        this.toast.error('重生成失败：未返回 mermaid 代码块');
         return;
       }
-      await this.tauri.ready();
-      if (!this.tauri.isTauri()) {
-        this.toast.warning('Web 预览模式暂不支持 AI 优化');
-        return;
-      }
-      if (this.optimizing()) return;
 
-      this.optimizing.set(true);
-      this.state.updateMediaItem(m.id, { status: 'processing' });
-      try {
-        const res = await this.backend.optimizeTranscription(m.id, this.state.settings().ai);
-        this.state.setTranscription(m.id, res.transcription);
-        this.state.updateMediaItem(m.id, { status: 'ready' });
-        this.toast.success('转写已优化');
-      } catch (err: any) {
-        console.error('optimizeTranscription failed', err);
-        this.state.updateMediaItem(m.id, { status: 'error' });
-        this.toast.error(this.formatError(err) || '转写优化失败');
-      } finally {
-        this.optimizing.set(false);
+      const targetIdx = kind === 'timeline' ? 0 : 1;
+      const cur = m.summary.content || '';
+      const curBlocks = this.extractMermaidBlocks(cur);
+
+      let patched = cur;
+      if (curBlocks.length >= 2) {
+        patched = this.replaceMermaidBlockAtIndex(cur, targetIdx, newBlocks[0].code);
+      } else {
+        const heading = kind === 'timeline' ? '### Narrative Timeline' : '### Logic Mind Map';
+        patched = `${cur.trim()}\n\n${heading}\n\n\`\`\`mermaid\n${newBlocks[0].code}\n\`\`\`\n`;
       }
+
+      const updated = {
+        ...m.summary,
+        content: patched,
+        generatedAt: new Date().toISOString(),
+        promptUsed: `${m.summary.promptUsed || ''}|regen:${kind}`.replace(/^\|+/, ''),
+      };
+      this.state.setAISummary(m.id, updated);
+      this.toast.success(kind === 'timeline' ? '时间轴已重生成' : '思维导图已重生成');
+    } catch (err: any) {
+      console.error('regenerateSummaryDiagram failed', err);
+      this.toast.error(this.formatError(err) || '重生成失败');
+    } finally {
+      this.summaryRegenerating.set(null);
+    }
+  }
+
+  async runOptimizeTranscription(): Promise<void> {
+    const m = this.media();
+    if (!m) return;
+    if (!m.transcription) {
+      this.toast.warning('请先生成转写');
+      this.activeTab.set('transcript');
+      return;
+    }
+    await this.tauri.ready();
+    if (!this.tauri.isTauri()) {
+      this.toast.warning('Web 预览模式暂不支持 AI 优化');
+      return;
+    }
+    if (this.optimizing()) return;
+
+    this.optimizing.set(true);
+    this.state.updateMediaItem(m.id, { status: 'processing' });
+    try {
+      const res = await this.backend.optimizeTranscription(m.id, this.state.settings().ai);
+      this.state.setTranscription(m.id, res.transcription);
+      this.state.updateMediaItem(m.id, { status: 'ready' });
+      this.toast.success('转写已优化');
+    } catch (err: any) {
+      console.error('optimizeTranscription failed', err);
+      this.state.updateMediaItem(m.id, { status: 'error' });
+      this.toast.error(this.formatError(err) || '转写优化失败');
+    } finally {
+      this.optimizing.set(false);
+    }
+  }
+
+  newChat(): void {
+    const m = this.media();
+    if (!m) return;
+    const chat = this.state.startAIConversation(m.id);
+    if (chat) {
+      this.activeChatId.set(chat.id);
+      this.activeTab.set('chat');
+    }
+  }
+
+  onChatEnter(evt: KeyboardEvent): void {
+    // Enter to send; Shift+Enter for newline.
+    if (evt.key !== 'Enter') return;
+    if (evt.shiftKey) return;
+    evt.preventDefault();
+    void this.sendChat();
+  }
+
+  async sendChat(): Promise<void> {
+    const m = this.media();
+    if (!m) return;
+    const content = this.chatDraft().trim();
+    if (!content) return;
+
+    await this.tauri.ready();
+    if (!this.tauri.isTauri()) {
+      this.toast.warning('Web 预览模式暂不支持 AI 对话');
+      return;
+    }
+    if (this.chatSending()) return;
+
+    let chat = this.activeConversation();
+    if (!chat) {
+      chat = this.state.startAIConversation(m.id) as AIConversation | null;
+      if (!chat) return;
+      this.activeChatId.set(chat.id);
     }
 
-   newChat(): void {
-      const m = this.media();
-      if (!m) return;
-      const chat = this.state.startAIConversation(m.id);
-      if (chat) {
-         this.activeChatId.set(chat.id);
-         this.activeTab.set('chat');
-      }
-   }
+    // Persist user message first.
+    this.state.addMessageToConversation(m.id, chat.id, { role: 'user', content });
+    this.chatDraft.set('');
 
-   onChatEnter(evt: KeyboardEvent): void {
-      // Enter to send; Shift+Enter for newline.
-      if (evt.key !== 'Enter') return;
-      if (evt.shiftKey) return;
-      evt.preventDefault();
-      void this.sendChat();
-   }
-
-   async sendChat(): Promise<void> {
-      const m = this.media();
-      if (!m) return;
-      const content = this.chatDraft().trim();
-      if (!content) return;
-
-      await this.tauri.ready();
-      if (!this.tauri.isTauri()) {
-         this.toast.warning('Web 预览模式暂不支持 AI 对话');
-         return;
-      }
-      if (this.chatSending()) return;
-
-      let chat = this.activeConversation();
-      if (!chat) {
-         chat = this.state.startAIConversation(m.id) as AIConversation | null;
-         if (!chat) return;
-         this.activeChatId.set(chat.id);
-      }
-
-      // Persist user message first.
-      this.state.addMessageToConversation(m.id, chat.id, { role: 'user', content });
-      this.chatDraft.set('');
-
-      this.chatSending.set(true);
-      try {
-         const updated = this.state.mediaItems().find(x => x.id === m.id)?.aiChats.find(c => c.id === chat!.id) || chat;
-         const payload = (updated?.messages || []).slice(-12).map(msg => ({ role: msg.role, content: msg.content }));
-          const res = await this.backend.chatMedia(m.id, this.state.settings().ai, payload, {
-            includeTranscription: this.chatIncludeTranscription(),
-            includeSummary: this.chatIncludeSummary(),
-            userLang: this.config.lang(),
-          });
-         this.state.addMessageToConversation(m.id, chat.id, {
-            role: res.message.role,
-            content: res.message.content,
-            referencedSegments: res.message.referencedSegments,
-         });
-      } catch (err: any) {
-         console.error('chatMedia failed', err);
-         this.toast.error(this.formatError(err) || '发送失败');
-      } finally {
-         this.chatSending.set(false);
-      }
+    this.chatSending.set(true);
+    try {
+      const updated = this.state.mediaItems().find(x => x.id === m.id)?.aiChats.find(c => c.id === chat!.id) || chat;
+      const payload = (updated?.messages || []).slice(-12).map(msg => ({ role: msg.role, content: msg.content }));
+      const res = await this.backend.chatMedia(m.id, this.state.settings().ai, payload, {
+        includeTranscription: this.chatIncludeTranscription(),
+        includeSummary: this.chatIncludeSummary(),
+        userLang: this.config.lang(),
+      });
+      this.state.addMessageToConversation(m.id, chat.id, {
+        role: res.message.role,
+        content: res.message.content,
+        referencedSegments: res.message.referencedSegments,
+      });
+    } catch (err: any) {
+      console.error('chatMedia failed', err);
+      this.toast.error(this.formatError(err) || '发送失败');
+    } finally {
+      this.chatSending.set(false);
     }
+  }
 }

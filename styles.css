@@ -94,3 +94,51 @@ body {
 .page-enter {
   animation: page-enter-frames 0.16s ease-out;
 }
+
+/* Custom slider for CC settings panel */
+.vecho-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  outline: none;
+}
+
+.vecho-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  transition: transform 0.1s ease;
+}
+
+.vecho-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+.vecho-slider::-webkit-slider-thumb:active {
+  transform: scale(0.95);
+}
+
+.vecho-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.vecho-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.15);
+}

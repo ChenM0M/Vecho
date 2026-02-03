@@ -53,6 +53,14 @@ export interface SubtitlesFile {
   mediaId: string;
   generatedAt?: string;
   tracks: SubtitleTrack[];
+  translation?: {
+    targetLang: string;
+    strategy?: string;
+    totalSegments: number;
+    translatedSegments: number;
+    coverage: number;
+    generatedAt?: string;
+  };
 }
 
 export interface UploadBeginResult {
@@ -108,6 +116,7 @@ export interface SummarizeMediaResult {
 export interface SummarizeMediaOptions {
   promptId?: string;
   promptTemplate?: string;
+  userLang?: 'en' | 'zh';
 }
 
 export interface ChatMediaResult {
@@ -238,6 +247,7 @@ export class BackendService {
         ai,
         promptId: options?.promptId,
         promptTemplate: options?.promptTemplate,
+        userLang: options?.userLang,
       }
     });
   }
