@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+env:
+  GH_REPO: ${{ github.repository }}
+
 permissions:
   contents: write
 
