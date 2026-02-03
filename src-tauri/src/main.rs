@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -10,6 +12,8 @@ use vecho_studio::portable;
 use vecho_studio::types::{JobProgressEvent, JobStatus, JobType, EVENT_JOB_PROGRESS};
 
 const SIDECAR_ENV_DIR: &str = "VECHO_SIDECAR_DIR";
+const MODELS_ENV_DIR: &str = "VECHO_MODELS_DIR";
+const TOOLS_ENV_DIR: &str = "VECHO_TOOLS_DIR";
 
 struct AppState {
   data_root: tokio::sync::OnceCell<std::path::PathBuf>,
@@ -3564,6 +3568,75 @@ fn tools_bin_dir(data_root: &Path) -> PathBuf {
   data_root.join("bin")
 }
 
+fn env_path(var: &str) -> Option<PathBuf> {
+  std::env::var_os(var)
+    .map(PathBuf::from)
+    .filter(|p| !p.as_os_str().is_empty())
+}
+
+fn push_unique(vec: &mut Vec<PathBuf>, p: PathBuf) {
+  if !vec.iter().any(|x| x == &p) {
+    vec.push(p);
+  }
+}
+
+fn is_data_dir(p: &Path) -> bool {
+  p.file_name()
+    .and_then(|s| s.to_str())
+    .map(|s| s.eq_ignore_ascii_case("data"))
+    .unwrap_or(false)
+}
+
+fn candidate_model_roots(app: &tauri::AppHandle, data_root: &Path) -> Vec<PathBuf> {
+  let mut out: Vec<PathBuf> = Vec::new();
+
+  if let Some(p) = env_path(MODELS_ENV_DIR) {
+    push_unique(&mut out, p);
+  }
+
+  // Current data root.
+  push_unique(&mut out, data_root.join("models"));
+
+  // Portable layout: <base>/data, allow <base>/models.
+  if is_data_dir(data_root) {
+    if let Some(base) = data_root.parent() {
+      push_unique(&mut out, base.join("models"));
+    }
+  }
+
+  // Default (non-portable) app data dir (for reuse between installed + portable builds).
+  if let Ok(app_data) = app.path().app_data_dir() {
+    push_unique(&mut out, app_data.join("models"));
+  }
+
+  out
+}
+
+fn candidate_tools_bin_dirs(app: &tauri::AppHandle, data_root: &Path) -> Vec<PathBuf> {
+  let mut out: Vec<PathBuf> = Vec::new();
+
+  if let Some(p) = env_path(TOOLS_ENV_DIR) {
+    push_unique(&mut out, p);
+  }
+
+  // Current data root.
+  push_unique(&mut out, tools_bin_dir(data_root));
+
+  // Portable layout: <base>/data, allow <base>/bin.
+  if is_data_dir(data_root) {
+    if let Some(base) = data_root.parent() {
+      push_unique(&mut out, base.join("bin"));
+    }
+  }
+
+  // Default (non-portable) app data dir.
+  if let Ok(app_data) = app.path().app_data_dir() {
+    push_unique(&mut out, app_data.join("bin"));
+  }
+
+  out
+}
+
 #[cfg(unix)]
 fn set_executable(path: &Path) -> Result<(), String> {
   use std::os::unix::fs::PermissionsExt;
@@ -4156,11 +4229,6 @@ async fn ensure_sherpa_onnx_offline(
     return Err("sherpa-onnx local transcription currently supports Windows x64 only".to_string());
   }
 
-  let base_root = tools_bin_dir(data_root).join("sherpa_onnx");
-  tokio::fs::create_dir_all(&base_root)
-    .await
-    .map_err(|e| format!("create sherpa root dir failed: {e}"))?;
-
   let has_cuda = allow_cuda && has_nvidia_cuda_driver();
   if require_cuda && !has_cuda {
     return Err("CUDA requested, but NVIDIA driver (nvcuda.dll) not found. Set localAccelerator=cpu/auto or install NVIDIA driver.".to_string());
@@ -4171,6 +4239,38 @@ async fn ensure_sherpa_onnx_offline(
   const WIN_X64_CUDA: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.23/sherpa-onnx-v1.12.23-cuda-12.x-cudnn-9.x-win-x64-cuda.tar.bz2";
 
   let exe_name = sidecar_basename("sherpa-onnx-offline");
+
+  // Reuse previously downloaded runtimes from other data roots (e.g. installed -> portable).
+  for bin_dir in candidate_tools_bin_dirs(app, data_root) {
+    let base_root = bin_dir.join("sherpa_onnx");
+    let cuda_root = base_root.join("cuda").join(VER);
+    let cuda_exe = cuda_root.join("Release").join(&exe_name);
+    let cpu_root = base_root.join("cpu").join(VER);
+    let cpu_exe = cpu_root.join("Release").join(&exe_name);
+
+    if has_cuda {
+      if cuda_exe.is_file() && verify_sherpa_exec(&cuda_exe).await.is_ok() {
+        let _ = emit_job(app, JobProgressEvent {
+          job_id: job_id.to_string(),
+          media_id: media_id.to_string(),
+          job_type: JobType::Transcribe,
+          status: JobStatus::Running,
+          progress: 0.18,
+          message: Some("using sherpa-onnx (CUDA)".to_string()),
+        });
+        return Ok(SherpaOnnxRuntime { exe: cuda_exe, provider: "cuda".to_string() });
+      }
+    }
+
+    if cpu_exe.is_file() && verify_sherpa_exec(&cpu_exe).await.is_ok() {
+      return Ok(SherpaOnnxRuntime { exe: cpu_exe, provider: "cpu".to_string() });
+    }
+  }
+
+  let base_root = tools_bin_dir(data_root).join("sherpa_onnx");
+  tokio::fs::create_dir_all(&base_root)
+    .await
+    .map_err(|e| format!("create sherpa root dir failed: {e}"))?;
 
   let cuda_root = base_root.join("cuda").join(VER);
   let cuda_exe = cuda_root.join("Release").join(&exe_name);
@@ -4254,11 +4354,6 @@ async fn ensure_whisper_cpp(
     return Err("whisper.cpp local transcription currently supports Windows x64 only".to_string());
   }
 
-  let base_root = tools_bin_dir(data_root).join("whisper_cpp");
-  tokio::fs::create_dir_all(&base_root)
-    .await
-    .map_err(|e| format!("create whisper root dir failed: {e}"))?;
-
   let has_cuda = allow_cuda && has_nvidia_cuda_driver();
   if require_cuda && !has_cuda {
     return Err("CUDA requested, but NVIDIA driver (nvcuda.dll) not found. Set localAccelerator=cpu/auto or install NVIDIA driver.".to_string());
@@ -4270,6 +4365,38 @@ async fn ensure_whisper_cpp(
   const WIN_X64_CUDA_11_8: &str = "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.3/whisper-cublas-11.8.0-bin-x64.zip";
 
   let exe_name = sidecar_basename("whisper-cli");
+
+  // Reuse previously downloaded runtimes from other data roots (e.g. installed -> portable).
+  for bin_dir in candidate_tools_bin_dirs(app, data_root) {
+    let base_root = bin_dir.join("whisper_cpp");
+    let cuda_root = base_root.join("cuda").join(VER);
+    let cuda_exe = cuda_root.join("Release").join(&exe_name);
+    let cpu_root = base_root.join("cpu").join(VER);
+    let cpu_exe = cpu_root.join("Release").join(&exe_name);
+
+    if has_cuda {
+      if cuda_exe.is_file() && verify_whisper_exec(&cuda_exe).await.is_ok() {
+        let _ = emit_job(app, JobProgressEvent {
+          job_id: job_id.to_string(),
+          media_id: media_id.to_string(),
+          job_type: JobType::Transcribe,
+          status: JobStatus::Running,
+          progress: 0.18,
+          message: Some("using whisper.cpp (CUDA)".to_string()),
+        });
+        return Ok(WhisperCppRuntime { exe: cuda_exe, provider: "cuda".to_string() });
+      }
+    }
+
+    if cpu_exe.is_file() && verify_whisper_exec(&cpu_exe).await.is_ok() {
+      return Ok(WhisperCppRuntime { exe: cpu_exe, provider: "cpu".to_string() });
+    }
+  }
+
+  let base_root = tools_bin_dir(data_root).join("whisper_cpp");
+  tokio::fs::create_dir_all(&base_root)
+    .await
+    .map_err(|e| format!("create whisper root dir failed: {e}"))?;
 
   let cuda_root = base_root.join("cuda").join(VER);
   let cuda_exe = cuda_root.join("Release").join(&exe_name);
@@ -4367,20 +4494,25 @@ async fn ensure_whisper_cpp_model(
   const MODEL_FILE: &str = "ggml-large-v3-turbo-q5_0.bin";
   const URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin";
 
+  // Reuse an existing model from other model roots (e.g. installed -> portable, or a shared cache).
+  for models_root in candidate_model_roots(app, data_root) {
+    let p = models_root.join("whispercpp").join(MODEL_FILE);
+    if tokio::fs::metadata(&p)
+      .await
+      .map(|m| m.len() > 300 * 1024 * 1024)
+      .unwrap_or(false)
+    {
+      return Ok(p);
+    }
+  }
+
   let model_dir = data_root.join("models").join("whispercpp");
   tokio::fs::create_dir_all(&model_dir)
     .await
     .map_err(|e| format!("create whispercpp model dir failed: {e}"))?;
 
   let model_path = model_dir.join(MODEL_FILE);
-  if model_path.is_file()
-    && tokio::fs::metadata(&model_path)
-      .await
-      .map(|m| m.len() > 300 * 1024 * 1024)
-      .unwrap_or(false)
-  {
-    return Ok(model_path);
-  }
+  // (If a partially downloaded file exists here, we re-download into this path.)
 
   let job_id_s = job_id.to_string();
   let media_id_s = media_id.to_string();
@@ -4753,6 +4885,27 @@ async fn ensure_sense_voice_model(
 
   const DIR_NAME: &str = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17";
   const URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2";
+
+  // Reuse an existing model from other model roots (e.g. installed -> portable, or a shared cache).
+  for models_root in candidate_model_roots(app, data_root) {
+    let model_dir = models_root.join("sensevoice").join(DIR_NAME);
+    let model_path = model_dir.join("model.onnx");
+    let tokens_path = model_dir.join("tokens.txt");
+
+    if model_path.is_file()
+      && tokens_path.is_file()
+      && tokio::fs::metadata(&model_path)
+        .await
+        .map(|m| m.len() > 128 * 1024 * 1024)
+        .unwrap_or(false)
+      && tokio::fs::metadata(&tokens_path)
+        .await
+        .map(|m| m.len() > 64 * 1024)
+        .unwrap_or(false)
+    {
+      return Ok((model_path, tokens_path));
+    }
+  }
 
   let models_root = data_root.join("models").join("sensevoice");
   tokio::fs::create_dir_all(&models_root)
