@@ -25,15 +25,12 @@ fn ensure_sidecars() {
             continue;
         }
 
-        if is_windows {
-            write_stub_exe(&path, &target, name);
-        } else {
-            write_stub_script(&path, name);
-        }
+        // Always generate a real binary stub (scripts break some bundlers/signers).
+        write_stub_binary(&path, &target, name);
     }
 }
 
-fn write_stub_exe(out_path: &Path, target: &str, name: &str) {
+fn write_stub_binary(out_path: &Path, target: &str, name: &str) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let src = out_dir.join(format!("sidecar-stub-{name}.rs"));
 
@@ -66,25 +63,5 @@ fn write_stub_exe(out_path: &Path, target: &str, name: &str) {
         .expect("spawn rustc to build stub sidecar");
     if !status.success() {
         panic!("failed to build stub sidecar: {name}");
-    }
-}
-
-fn write_stub_script(out_path: &Path, name: &str) {
-    let _ = fs::create_dir_all(out_path.parent().expect("bin dir"));
-    fs::write(
-        out_path,
-        format!(
-            "#!/usr/bin/env sh\n\
-echo \"[vecho] sidecar '{name}' is a stub. Provide the real binary under src-tauri/bin and rebuild.\" 1>&2\n\
-exit 127\n"
-        ),
-    )
-    .expect("write stub script");
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perm = fs::Permissions::from_mode(0o755);
-        let _ = fs::set_permissions(out_path, perm);
     }
 }
